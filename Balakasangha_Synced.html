@@ -10,6 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -119,6 +120,14 @@ tbody td{padding:6px 8px;vertical-align:middle}
 #toast{position:fixed;bottom:20px;right:20px;background:#1D9E75;color:#fff;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:500;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9998}
 #toast.show{opacity:1}
 
+.login-panel{max-width:420px;margin:3rem auto;padding:24px;background:#fff;border:1px solid #e2e2df;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
+.login-panel h2{font-size:20px;margin-bottom:12px}
+.login-panel p{font-size:13px;color:#555;margin-bottom:18px}
+.login-panel input{width:100%;height:40px;margin-bottom:12px;padding:0 12px;border-radius:8px;border:1px solid #d0d0cc}
+.login-panel button{width:100%;height:40px;margin-top:10px;border-radius:8px;border:none;background:#185FA5;color:#fff;font-weight:600}
+.login-panel .secondary-btn{background:#fff;color:#185FA5;border:1px solid #185FA5}
+.login-panel .auth-actions{display:grid;gap:10px;margin-top:12px}
+.login-panel .auth-note{font-size:12px;color:#777;margin-top:10px;text-align:center}
 @media(max-width:480px){
   .col-bar,.col-streak{display:none}
   .col-check{width:50px}.col-sessions{width:80px}
@@ -129,12 +138,31 @@ tbody td{padding:6px 8px;vertical-align:middle}
 </head>
 <body>
 
+<div id="login-screen" class="login-panel">
+  <h2>Volunteer sign in</h2>
+  <p>Sign in with your email and password to access the attendance app.</p>
+  <input type="email" id="auth-email" placeholder="Email address">
+  <input type="password" id="auth-password" placeholder="Password">
+  <div class="auth-actions">
+    <button onclick="signIn()">Sign in</button>
+    <button class="secondary-btn" onclick="registerUser()">Register new volunteer</button>
+  </div>
+  <div class="auth-note">If volunteers are already registered, use Sign in. Otherwise register one account and share credentials securely.</div>
+</div>
+
 <!-- MAIN APP -->
-<div class="app" id="main-app">
+<div class="app" id="main-app" style="display:none">
   <h1>🕉 Balakasangha Attendance</h1>
   <p class="subtitle">Vivekananda Yuvaka Sanga — Sunday sessions tracker</p>
 
   <div class="top-bar">
+    <div class="top-row">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span id="user-label" style="font-size:12px;color:#555"></span>
+          <button id="debug-toggle" class="btn-sm" style="margin-left:12px;display:none;font-size:12px;padding:4px 8px" onclick="toggleDebug()">Show debug</button>
+        </div>
+        <button class="btn-sm btn-red" id="sign-out-btn" style="margin-left:auto;display:none" onclick="signOutUser()">Sign out</button>
+    </div>
     <div class="top-row">
       <label>Month:</label>
       <select id="month-sel" onchange="onMonthChange()"></select>
@@ -186,6 +214,18 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
 <div id="toast"></div>
 
+<!-- Debug panel (toggle with the Show debug button) -->
+<div id="debug-panel" style="display:none;max-width:960px;margin:12px auto;padding:12px;background:#fff;border:1px solid #e8e8e4;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.06);">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <strong>Debug: app state</strong>
+    <div>
+      <button onclick="renderDebug()" class="btn-sm">Refresh</button>
+      <button onclick="copyDebug()" class="btn-sm" style="margin-left:8px">Copy</button>
+    </div>
+  </div>
+  <pre id="debug-content" style="white-space:pre-wrap;overflow:auto;max-height:360px;padding:8px;border-radius:6px;background:#fafafa;border:1px solid #f0f0ec;color:#111"></pre>
+</div>
+
 <script>
 // ===================== CONFIG =====================
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyVLWhUUIKCqDF_4EwjKf65GFFwW_cqw81cajUVm7d60ZWLzcjDmozd-08Mq4sp7uKH/exec";
@@ -220,6 +260,8 @@ const FIREBASE_CONFIG = {
 };
 const STATE_DOC_PATH = 'attendance/state';
 let db=null;
+let auth=null;
+let currentUser=null;
 let stateDoc=null;
 
 function setSyncStatus(status,msg){
@@ -240,20 +282,18 @@ async function initFirebase(){
       throw new Error('Firebase configuration not set');
     }
     firebase.initializeApp(FIREBASE_CONFIG);
+    auth = firebase.auth();
     db = firebase.firestore();
     stateDoc = db.doc(STATE_DOC_PATH);
-    stateDoc.onSnapshot(snapshot=>{
-      if(snapshot.exists){
-        const data = snapshot.data();
-        if(data.students){
-          SEC_KEYS.forEach(key=>{students[key]=data.students[key]||[];});
-        }
-        records = data.records || {};
-        setSyncStatus('synced','Synced with Firebase');
-        renderCurrent();
+
+    auth.onAuthStateChanged(async user=>{
+      currentUser = user;
+      if(user){
+        showApp(user);
+        try{ await loadState(); }catch(e){}
+      } else {
+        showLogin();
       }
-    },()=>{
-      setSyncStatus('error','Firebase sync error');
     });
   }catch(e){
     setSyncStatus('error','Firebase init failed');
@@ -262,6 +302,7 @@ async function initFirebase(){
 }
 
 async function loadState(){
+
   setSyncStatus('syncing','Loading shared data...');
   try{
     if(!stateDoc) throw new Error('Firebase not initialized');
@@ -276,6 +317,7 @@ async function loadState(){
       await saveState();
     }
     setSyncStatus('synced','Loaded shared data');
+    try{ renderDebug(); }catch(e){}
   }catch(e){
     // Fallback to local storage if Firebase fails
     const storedStudents = localStorage.getItem('balaka_students');
@@ -286,6 +328,7 @@ async function loadState(){
     }
     records = storedRecords? JSON.parse(storedRecords) : {};
     setSyncStatus('synced','Loaded local data (offline)');
+    try{ renderDebug(); }catch(e){}
   }
 }
 
@@ -295,12 +338,14 @@ async function saveState(){
     if(stateDoc){
       await stateDoc.set({students,records}, {merge:true});
       setSyncStatus('synced','Saved to Firebase ✓');
+      try{ renderDebug(); }catch(e){}
     } else {
       throw new Error('Firebase unavailable');
     }
   }catch(e){
     persistLocal();
     setSyncStatus('synced','Saved locally');
+    try{ renderDebug(); }catch(e){}
   }
 }
 
@@ -313,14 +358,50 @@ for(let y=curYear-2;y<=curYear+3;y++){const o=document.createElement('option');o
 
 async function initApp(){
   await initFirebase();
-  await loadState();
+  setInterval(async()=>{
+    if(currentUser){
+      await loadState();
+      renderCurrent();
+    }
+  }, 30000);
+}
+
+function showLogin(){
+  document.getElementById('login-screen').style.display='block';
+  document.getElementById('main-app').style.display='none';
+  setSyncStatus('error','Please sign in to sync');
+}
+
+function showApp(user){
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('main-app').style.display='block';
+  document.getElementById('user-label').textContent='Signed in as '+(user.email||user.uid);
+  document.getElementById('sign-out-btn').style.display='inline-flex';
+  const dbgBtn = document.getElementById('debug-toggle'); if(dbgBtn) dbgBtn.style.display='inline-flex';
   buildSundayBtns();
   renderCurrentSection();
-  // Auto-refresh every 30 seconds
-  setInterval(async()=>{
-    await loadState();
-    renderCurrent();
-  }, 30000);
+}
+
+function signIn(){
+  const email=document.getElementById('auth-email').value.trim();
+  const password=document.getElementById('auth-password').value;
+  if(!email||!password){showToast('Enter email and password');return;}
+  setSyncStatus('syncing','Signing in...');
+  auth.signInWithEmailAndPassword(email,password).catch(e=>{setSyncStatus('error','Sign in failed');showToast(e.message);});
+}
+
+function registerUser(){
+  const email=document.getElementById('auth-email').value.trim();
+  const password=document.getElementById('auth-password').value;
+  if(!email||!password){showToast('Enter email and password');return;}
+  setSyncStatus('syncing','Registering...');
+  auth.createUserWithEmailAndPassword(email,password).then(()=>{
+    showToast('Volunteer registered');
+  }).catch(e=>{setSyncStatus('error','Registration failed');showToast(e.message);});
+}
+
+function signOutUser(){
+  auth.signOut().then(()=>{ showLogin(); setSyncStatus('error','Signed out'); }).catch(e=>{showToast('Sign out failed');});
 }
 
 // ===================== SUNDAYS =====================
@@ -390,6 +471,25 @@ document.querySelectorAll('.school-tab').forEach(btn=>{
 
 function renderCurrent(){if(curView==='attendance')renderCurrentSection();else renderAnalytics();}
 function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);}
+
+// ===================== DEBUG HELPERS =====================
+function toggleDebug(){
+  const p=document.getElementById('debug-panel');
+  if(!p) return;
+  if(p.style.display==='none' || p.style.display===''){
+    p.style.display='block'; document.getElementById('debug-toggle').textContent='Hide debug'; renderDebug();
+  } else { p.style.display='none'; document.getElementById('debug-toggle').textContent='Show debug'; }
+}
+
+function renderDebug(){
+  const el=document.getElementById('debug-content'); if(!el) return;
+  const out={students,records,curDate,curMonth,curYear,currentUser:currentUser?{uid:currentUser.uid,email:currentUser.email}:null};
+  el.textContent = JSON.stringify(out,null,2);
+}
+
+function copyDebug(){
+  const el=document.getElementById('debug-content'); if(!el) return; navigator.clipboard?.writeText(el.textContent||'').then(()=>showToast('Debug copied'));
+}
 
 // ===================== RECORDS =====================
 function getRecord(k,d,i){return records[k+'|'+d+'|'+i]||null;}
