@@ -159,7 +159,6 @@ tbody td{padding:6px 8px;vertical-align:middle}
     <div class="top-row">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <span id="user-label" style="font-size:12px;color:#555"></span>
-          <button id="debug-toggle" class="btn-sm" style="margin-left:12px;display:none;font-size:12px;padding:4px 8px" onclick="toggleDebug()">Show debug</button>
         </div>
         <button class="btn-sm btn-red" id="sign-out-btn" style="margin-left:auto;display:none" onclick="signOutUser()">Sign out</button>
     </div>
@@ -215,16 +214,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
 <div id="toast"></div>
 
 <!-- Debug panel (toggle with the Show debug button) -->
-<div id="debug-panel" style="display:none;max-width:960px;margin:12px auto;padding:12px;background:#fff;border:1px solid #e8e8e4;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.06);">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-    <strong>Debug: app state</strong>
-    <div>
-      <button onclick="renderDebug()" class="btn-sm">Refresh</button>
-      <button onclick="copyDebug()" class="btn-sm" style="margin-left:8px">Copy</button>
-    </div>
-  </div>
-  <pre id="debug-content" style="white-space:pre-wrap;overflow:auto;max-height:360px;padding:8px;border-radius:6px;background:#fafafa;border:1px solid #f0f0ec;color:#111"></pre>
-</div>
+
 
 <script>
 // ===================== CONFIG =====================
@@ -286,6 +276,17 @@ async function initFirebase(){
     db = firebase.firestore();
     stateDoc = db.doc(STATE_DOC_PATH);
 
+    // Real-time listener so changes on one device appear on others immediately
+    stateDoc.onSnapshot(snapshot=>{
+      if(snapshot.exists){
+        const data = snapshot.data();
+        SEC_KEYS.forEach(key=>{students[key]=data.students?.[key]||[];});
+        records = data.records || {};
+        setSyncStatus('synced','Synced with Firebase');
+        renderCurrent();
+      }
+    }, err=>{ setSyncStatus('error','Firebase sync error'); });
+
     auth.onAuthStateChanged(async user=>{
       currentUser = user;
       if(user){
@@ -317,7 +318,6 @@ async function loadState(){
       await saveState();
     }
     setSyncStatus('synced','Loaded shared data');
-    try{ renderDebug(); }catch(e){}
   }catch(e){
     // Fallback to local storage if Firebase fails
     const storedStudents = localStorage.getItem('balaka_students');
@@ -328,7 +328,6 @@ async function loadState(){
     }
     records = storedRecords? JSON.parse(storedRecords) : {};
     setSyncStatus('synced','Loaded local data (offline)');
-    try{ renderDebug(); }catch(e){}
   }
 }
 
@@ -338,14 +337,12 @@ async function saveState(){
     if(stateDoc){
       await stateDoc.set({students,records}, {merge:true});
       setSyncStatus('synced','Saved to Firebase ✓');
-      try{ renderDebug(); }catch(e){}
     } else {
       throw new Error('Firebase unavailable');
     }
   }catch(e){
     persistLocal();
     setSyncStatus('synced','Saved locally');
-    try{ renderDebug(); }catch(e){}
   }
 }
 
@@ -377,7 +374,7 @@ function showApp(user){
   document.getElementById('main-app').style.display='block';
   document.getElementById('user-label').textContent='Signed in as '+(user.email||user.uid);
   document.getElementById('sign-out-btn').style.display='inline-flex';
-  const dbgBtn = document.getElementById('debug-toggle'); if(dbgBtn) dbgBtn.style.display='inline-flex';
+  // debug toggle removed
   buildSundayBtns();
   renderCurrentSection();
 }
@@ -473,23 +470,7 @@ function renderCurrent(){if(curView==='attendance')renderCurrentSection();else r
 function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);}
 
 // ===================== DEBUG HELPERS =====================
-function toggleDebug(){
-  const p=document.getElementById('debug-panel');
-  if(!p) return;
-  if(p.style.display==='none' || p.style.display===''){
-    p.style.display='block'; document.getElementById('debug-toggle').textContent='Hide debug'; renderDebug();
-  } else { p.style.display='none'; document.getElementById('debug-toggle').textContent='Show debug'; }
-}
-
-function renderDebug(){
-  const el=document.getElementById('debug-content'); if(!el) return;
-  const out={students,records,curDate,curMonth,curYear,currentUser:currentUser?{uid:currentUser.uid,email:currentUser.email}:null};
-  el.textContent = JSON.stringify(out,null,2);
-}
-
-function copyDebug(){
-  const el=document.getElementById('debug-content'); if(!el) return; navigator.clipboard?.writeText(el.textContent||'').then(()=>showToast('Debug copied'));
-}
+// debug helpers removed
 
 // ===================== RECORDS =====================
 function getRecord(k,d,i){return records[k+'|'+d+'|'+i]||null;}
