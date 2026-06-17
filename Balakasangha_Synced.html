@@ -8,6 +8,8 @@
 <meta name="theme-color" content="#185FA5">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.24.0/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -207,7 +209,19 @@ let curDate=null,curView='attendance',curType='old';
 let curSchool={old:'old-middle',new:'new-middle'};
 const chartInstances={};
 
-// ===================== STORAGE (local) =====================
+// Firebase config — replace these values with your Firebase project settings
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAGpZNwnekU2BEpEbmIHmsMWYBI2fI7KcE",
+  authDomain: "balakasangha-attendance.firebaseapp.com",
+  projectId: "balakasangha-attendance",
+  storageBucket: "balakasangha-attendance.appspot.com",
+  messagingSenderId: "814303496942",
+  appId: "1:814303496942:web:5cf712e73513480f5b81ff"
+};
+const STATE_DOC_PATH = 'attendance/state';
+let db=null;
+let stateDoc=null;
+
 function setSyncStatus(status,msg){
   const dot=document.getElementById('sync-dot');
   const label=document.getElementById('sync-label');
@@ -215,60 +229,80 @@ function setSyncStatus(status,msg){
   label.textContent=msg;
 }
 
-function persistStudents(){
+function persistLocal(){
   try{ localStorage.setItem('balaka_students', JSON.stringify(students)); }catch(e){}
-}
-function persistRecords(){
   try{ localStorage.setItem('balaka_records', JSON.stringify(records)); }catch(e){}
 }
 
-async function loadAllStudents(){
-  setSyncStatus('syncing','Loading students...');
+async function initFirebase(){
   try{
-    const stored = localStorage.getItem('balaka_students');
-    if(stored){
-      const data = JSON.parse(stored);
-      SEC_KEYS.forEach(key=>{
-        const arr = data[key]||[];
-        students[key]=arr.filter(v=>{
-          if(typeof v==='string') return v.trim().length>0;
-          return v!==null && v!==undefined;
-        });
-      });
+    if(!FIREBASE_CONFIG.projectId || FIREBASE_CONFIG.projectId==='YOUR_PROJECT_ID'){
+      throw new Error('Firebase configuration not set');
+    }
+    firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.firestore();
+    stateDoc = db.doc(STATE_DOC_PATH);
+    stateDoc.onSnapshot(snapshot=>{
+      if(snapshot.exists){
+        const data = snapshot.data();
+        if(data.students){
+          SEC_KEYS.forEach(key=>{students[key]=data.students[key]||[];});
+        }
+        records = data.records || {};
+        setSyncStatus('synced','Synced with Firebase');
+        renderCurrent();
+      }
+    },()=>{
+      setSyncStatus('error','Firebase sync error');
+    });
+  }catch(e){
+    setSyncStatus('error','Firebase init failed');
+    showToast('Firebase setup incomplete');
+  }
+}
+
+async function loadState(){
+  setSyncStatus('syncing','Loading shared data...');
+  try{
+    if(!stateDoc) throw new Error('Firebase not initialized');
+    const snapshot = await stateDoc.get();
+    if(snapshot.exists){
+      const data = snapshot.data();
+      SEC_KEYS.forEach(key=>{students[key]=data.students?.[key]||[];});
+      records = data.records || {};
     } else {
       SEC_KEYS.forEach(key=>students[key]=[]);
-      persistStudents();
+      records={};
+      await saveState();
     }
-    setSyncStatus('synced','Loaded from local storage');
-  } catch(e){
-    setSyncStatus('error','Could not load students');
-    showToast('Error loading students');
+    setSyncStatus('synced','Loaded shared data');
+  }catch(e){
+    // Fallback to local storage if Firebase fails
+    const storedStudents = localStorage.getItem('balaka_students');
+    const storedRecords = localStorage.getItem('balaka_records');
+    if(storedStudents){
+      const data = JSON.parse(storedStudents);
+      SEC_KEYS.forEach(key=>{students[key]=data[key]||[];});
+    }
+    records = storedRecords? JSON.parse(storedRecords) : {};
+    setSyncStatus('synced','Loaded local data (offline)');
   }
 }
 
-async function loadMonthAttendance(){
-  setSyncStatus('syncing','Loading attendance...');
-  try{
-    const stored = localStorage.getItem('balaka_records');
-    records = stored? JSON.parse(stored) : {};
-    setSyncStatus('synced','Loaded attendance from local storage');
-  } catch(e){
-    setSyncStatus('error','Could not load attendance');
-  }
-}
-
-async function saveAttendanceToSheet(key,date){
+async function saveState(){
   setSyncStatus('syncing','Saving...');
   try{
-    persistRecords();
-    setSyncStatus('synced','Saved locally ✓');
-  } catch(e){
-    setSyncStatus('error','Save failed');
-    showToast('Save failed!');
+    if(stateDoc){
+      await stateDoc.set({students,records}, {merge:true});
+      setSyncStatus('synced','Saved to Firebase ✓');
+    } else {
+      throw new Error('Firebase unavailable');
+    }
+  }catch(e){
+    persistLocal();
+    setSyncStatus('synced','Saved locally');
   }
 }
-
-/* server-backed functions removed — using localStorage instead */
 
 // ===================== INIT =====================
 window.addEventListener('load', initApp);
@@ -278,13 +312,13 @@ MONTHS.forEach((m,i)=>{const o=document.createElement('option');o.value=i;o.text
 for(let y=curYear-2;y<=curYear+3;y++){const o=document.createElement('option');o.value=y;o.textContent=y;if(y===curYear)o.selected=true;yearSel.appendChild(o);}
 
 async function initApp(){
-  await loadAllStudents();
+  await initFirebase();
+  await loadState();
   buildSundayBtns();
-  await loadMonthAttendance();
   renderCurrentSection();
   // Auto-refresh every 30 seconds
   setInterval(async()=>{
-    await loadMonthAttendance();
+    await loadState();
     renderCurrent();
   }, 30000);
 }
@@ -441,13 +475,13 @@ async function mark(key,idx,type,el){
   if(el.checked){setRecord(key,curDate,idx,type);const oc=type==='P'?'absent-check':'present-check';const ob=el.closest('tr').querySelector('.'+oc);if(ob)ob.checked=false;}
   else setRecord(key,curDate,idx,null);
   renderSection(key);filterTable(key);
-  await saveAttendanceToSheet(key,curDate);
+  await saveState();
 }
 
 async function markAll(key,type){
   students[key].forEach((_,i)=>setRecord(key,curDate,i,type));
   renderSection(key);
-  await saveAttendanceToSheet(key,curDate);
+  await saveState();
   showToast('All marked '+(type==='P'?'present':'absent'));
 }
 
@@ -456,12 +490,10 @@ async function addStudent(key){
   inp.value='';
   setSyncStatus('syncing','Adding student...');
   try{
-    // Add locally
     students[key].push(name);
-    persistStudents();
+    await saveState();
     renderSection(key);
     showToast(name+' added');
-    setSyncStatus('synced','Added locally');
   }catch(e){setSyncStatus('error','Failed to add student');showToast('Error adding student');}
 }
 
@@ -470,7 +502,6 @@ async function removeStudent(key,idx){
   const name=students[key][idx];
   setSyncStatus('syncing','Removing...');
   try{
-    // Remove locally and shift records indexes
     students[key].splice(idx,1);
     const newRecords={};
     Object.keys(records).forEach(k=>{
@@ -481,10 +512,9 @@ async function removeStudent(key,idx){
       else if(i>idx) newRecords[key+'|'+date+'|'+(i-1)]=records[k];
     });
     records=newRecords;
-    persistStudents();persistRecords();
+    await saveState();
     renderSection(key);
     showToast(name+' removed');
-    setSyncStatus('synced','Removed locally');
   }catch(e){setSyncStatus('error','Failed to remove');showToast('Error removing student');}
 }
 
@@ -502,6 +532,7 @@ function showToast(msg){const t=document.getElementById('toast');t.textContent=m
 
 // ===================== EXPORT =====================
 function exportExcel(key){
+  persistLocal();
   const sec=SECTIONS[key],st=students[key];
   const sundays=getSundays(curYear,curMonth).map(fmtDate);
   const monthLabel=MONTHS[curMonth]+' '+curYear;
@@ -520,6 +551,7 @@ function exportExcel(key){
 }
 
 function exportAllExcel(){
+  persistLocal();
   const wb=XLSX.utils.book_new();
   const sundays=getSundays(curYear,curMonth).map(fmtDate);
   const monthLabel=MONTHS[curMonth]+' '+curYear;
