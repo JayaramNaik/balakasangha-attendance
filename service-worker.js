@@ -1,20 +1,22 @@
-const CACHE_NAME = 'balaka-v2';
+const CACHE_NAME = 'balaka-v3';
+
+// GitHub Pages subfolder prefix — change this if your repo name changes
+const BASE = '/balakasangha-attendance';
+
 const ASSETS = [
-  '/',
-  '/index.html',
-  '/Balakasangha_Synced.html',
-  '/manifest.json'
-  // Removed icon files — they cause addAll to fail if missing
+  BASE + '/',
+  BASE + '/index.html',
+  BASE + '/Balakasangha_Synced.html',
+  BASE + '/manifest.json'
 ];
 
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => {
-      // addAll fails if ANY file 404s — so we add each file individually
       return Promise.allSettled(
         ASSETS.map(url =>
           cache.add(url).catch(err =>
-            console.warn('[SW] Could not cache:', url, err)
+            console.warn('[SW] Could not cache:', url, err.message)
           )
         )
       );
@@ -45,7 +47,7 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE_NAME).then(c => c.put(req, copy));
         } catch(e) {}
         return res;
-      }).catch(() => caches.match('/Balakasangha_Synced.html'))
+      }).catch(() => caches.match(BASE + '/Balakasangha_Synced.html'))
     )
   );
 });
