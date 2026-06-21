@@ -1,12 +1,10 @@
-const CACHE_NAME = 'balaka-v3';
-
-// GitHub Pages subfolder prefix — change this if your repo name changes
+const CACHE_NAME = 'balaka-v4';
 const BASE = '/balakasangha-attendance';
 
 const ASSETS = [
   BASE + '/',
   BASE + '/index.html',
-  BASE + '/Balakasangha_Synced.html',
+  BASE + '/Balakasangha_Enhanced.html',
   BASE + '/manifest.json'
 ];
 
@@ -47,7 +45,7 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE_NAME).then(c => c.put(req, copy));
         } catch(e) {}
         return res;
-      }).catch(() => caches.match(BASE + '/Balakasangha_Synced.html'))
+      }).catch(() => caches.match(BASE + '/Balakasangha_Enhanced.html'))
     )
   );
 });
