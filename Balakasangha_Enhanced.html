@@ -913,6 +913,16 @@ async function confirmAddStudent(){
       class:studentClass,
       joiningDate:joiningDate
     });
+    // Clear any stale records at the new student's index to prevent
+    // inheriting attendance from a previously deleted student
+    const newIdx = students[addStudentContext.key].length - 1;
+    const skey = addStudentContext.key;
+    Object.keys(records).forEach(k => {
+      const parts = k.split('|');
+      if(parts[0] === skey && parseInt(parts[2]) === newIdx) {
+        delete records[k];
+      }
+    });
     await saveState();
     renderSection(addStudentContext.key);
     closeAddStudentModal();
