@@ -404,7 +404,7 @@ const FIREBASE_CONFIG = {
   apiKey: "AIzaSyAGpZNwnekU2BEpEbmIHmsMWYBI2fI7KcE",
   authDomain: "balakasangha-attendance.firebaseapp.com",
   projectId: "balakasangha-attendance",
-  storageBucket: "balakasangha-attendance.appspot.com",
+  storageBucket: "balakasangha-attendance.firebasestorage.app",
   messagingSenderId: "814303496942",
   appId: "1:814303496942:web:5cf712e73513480f5b81ff"
 };
@@ -533,8 +533,8 @@ async function initFirebase(){
 async function loadUserRole(user){
   try{
     const adminSnapshot = await adminsDoc.get();
-    const admins = adminSnapshot.data()?.list || [];
-    if(admins.includes(user.uid)){
+    const admins = adminSnapshot.data()?.adminEmails || adminSnapshot.data()?.list || [];
+    if(admins.includes(user.email)){
       currentUserRole = 'admin';
     } else {
       currentUserRole = 'volunteer';
