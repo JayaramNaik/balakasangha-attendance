@@ -521,9 +521,20 @@ async function loadUserRole(user){
     } else {
       currentUserRole = 'volunteer';
     }
-    currentUserName = user.email.split('@')[0];
+    // Fetch full name from users collection
+    try{
+      const userDoc = await db.collection('users').doc(user.uid).get();
+      if(userDoc.exists && userDoc.data().name){
+        currentUserName = userDoc.data().name;
+      } else {
+        currentUserName = user.email.split('@')[0];
+      }
+    }catch(e2){
+      currentUserName = user.email.split('@')[0];
+    }
   }catch(e){
     currentUserRole = 'volunteer';
+    currentUserName = user.email.split('@')[0];
   }
 }
 
@@ -604,7 +615,7 @@ function showApp(user){
   
   // Update user info
   document.getElementById('user-name-display').textContent=currentUserName || user.email;
-  document.getElementById('user-role-display').textContent=currentUserRole==='admin'?'Administrator':'Volunteer';
+  document.getElementById('user-role-display').textContent=(currentUserRole==='admin'?'Administrator':'Volunteer')+' — '+user.email;
   document.getElementById('user-role-icon').textContent=currentUserRole==='admin'?'👨‍💼':'🙋';
   
   // Hide analytics tab completely for volunteers
