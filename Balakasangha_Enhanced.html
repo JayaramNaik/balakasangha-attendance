@@ -110,7 +110,7 @@ thead th{text-align:left;font-weight:600;font-size:11px;color:#888;padding:7px 8
 tbody tr{border-bottom:1px solid #f0f0ec}
 tbody tr:hover{background:#fafaf8}
 tbody td{padding:6px 8px;vertical-align:middle}
-.col-num{width:30px}.col-name{min-width:100px}.col-class{min-width:80px}.col-check{width:66px;text-align:center}.col-sessions{width:105px}.col-streak{width:58px;text-align:center}.col-bar{width:80px}.col-del{width:32px;text-align:center}
+.col-num{width:30px}.col-name{min-width:100px}.col-class{min-width:80px}.col-check{width:66px;text-align:center}.col-sessions{width:105px}.col-streak{width:58px;text-align:center}.col-bar{width:80px}.col-del{width:32px;text-align:center}.col-tracker{min-width:100px;font-size:11px;color:#666}
 .present-check{accent-color:#1D9E75;width:16px;height:16px;cursor:pointer}
 .absent-check{accent-color:#D85A30;width:16px;height:16px;cursor:pointer}
 .pill{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;font-weight:600;white-space:nowrap}
@@ -849,6 +849,11 @@ function renderSection(key){
       <td class="col-bar">${barHtml}</td>`;
     
     if(currentUserRole==='admin'){
+      const tracker=getAttendanceTracker(key,curDate,i);
+      const markedInfo = tracker.name
+        ? `<span style="color:#185FA5;font-weight:600">${tracker.name}</span><br><span style="color:#aaa;font-size:10px">${tracker.time}</span>`
+        : `<span style="color:#ccc">—</span>`;
+      html+=`<td class="col-tracker">${rec ? markedInfo : '<span style="color:#ccc">—</span>'}</td>`;
       html+=`<td class="col-del"><button class="del-btn" onclick="removeStudent('${key}',${i})">🗑</button></td>`;
     }
     html+=`</tr>`;
