@@ -205,20 +205,6 @@ tbody td{padding:6px 8px;vertical-align:middle}
       <div class="login-content">
         <div id="error-message" class="error-message"></div>
         
-        <div id="role-selector">
-          <p class="role-select-prompt">Select your role to continue</p>
-          <div class="role-selector">
-            <button class="role-btn active" onclick="selectRole('admin')">
-              <span class="role-icon">👨‍💼</span>
-              <span>Admin</span>
-            </button>
-            <button class="role-btn" onclick="selectRole('volunteer')">
-              <span class="role-icon">🙋</span>
-              <span>Volunteer</span>
-            </button>
-          </div>
-        </div>
-
         <div class="form-group">
           <label for="auth-email">Email Address</label>
           <div class="input-wrapper">
@@ -289,7 +275,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
           <button class="btn-register" onclick="showLoginMode()">Back to Sign In</button>
 
           <div class="login-footer">
-            <p>Admin must approve new volunteer accounts.</p>
+            <p>🔒 New accounts are Volunteer by default. Contact admin to request elevated access.</p>
           </div>
         </div>
       </div>
@@ -474,12 +460,7 @@ function persistLocal(){
   try{ localStorage.setItem('balaka_records', JSON.stringify(records)); }catch(e){}
 }
 
-// ===================== ROLE SELECTION =====================
-function selectRole(role){
-  currentUserRole=role;
-  document.querySelectorAll('.role-btn').forEach(btn=>btn.classList.remove('active'));
-  event.target.closest('.role-btn').classList.add('active');
-}
+// Role is determined automatically from Firebase adminEmails list
 
 function showLoginMode(){
   document.getElementById('register-screen').style.display='none';
@@ -626,16 +607,14 @@ function showApp(user){
   document.getElementById('user-role-display').textContent=currentUserRole==='admin'?'Administrator':'Volunteer';
   document.getElementById('user-role-icon').textContent=currentUserRole==='admin'?'👨‍💼':'🙋';
   
-  // Restrict analytics tab for volunteers
+  // Hide analytics tab completely for volunteers
   const analyticsTab=document.getElementById('analytics-tab');
   if(currentUserRole==='volunteer'){
-    analyticsTab.classList.add('disabled');
-    analyticsTab.style.pointerEvents='none';
-    analyticsTab.onclick=()=>{ showToast('Analytics is admin-only'); return false; };
+    analyticsTab.style.display='none';
+    // If somehow on analytics view, switch back to attendance
+    if(curView==='analytics'){ curView='attendance'; }
   } else {
-    analyticsTab.classList.remove('disabled');
-    analyticsTab.style.pointerEvents='auto';
-    analyticsTab.onclick=null;
+    analyticsTab.style.display='';
   }
   
   buildSundayBtns();
