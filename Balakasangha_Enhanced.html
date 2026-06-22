@@ -317,6 +317,49 @@ tbody td{padding:6px 8px;vertical-align:middle}
   </div>
   <div id="session-info" class="session-info"></div>
 
+  <!-- ── Year-end upgrade reminder banner ── -->
+  <div id="upgrade-banner" style="display:none;background:#FFF3CD;border:1.5px solid #FFC107;
+       border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13px;color:#856404;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div>
+        🎓 <strong>Year-End Reminder:</strong> Next Sunday (1st June) all students will be 
+        automatically promoted to the next class. Class 10 students will graduate and be removed.
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="runClassPromotion()" 
+                style="background:#185FA5;color:#fff;border:none;border-radius:6px;
+                       padding:6px 14px;cursor:pointer;font-size:12px;font-weight:600;">
+          🎓 Promote Now
+        </button>
+        <button onclick="document.getElementById('upgrade-banner').style.display='none'"
+                style="background:#ccc;color:#333;border:none;border-radius:6px;
+                       padding:6px 10px;cursor:pointer;font-size:12px;">
+          Dismiss
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Graduated students modal ── -->
+  <div id="graduated-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
+       z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:16px;padding:28px;max-width:460px;width:90%;
+                box-shadow:0 8px 32px rgba(0,0,0,.18);">
+      <h3 style="margin:0 0 12px;color:#185FA5;">🎓 Graduated Students</h3>
+      <p style="font-size:13px;color:#666;margin:0 0 14px;">
+        These Class 10 students have completed Balakasangha and have been removed from the student list. 
+        They can now register as Volunteers!
+      </p>
+      <div id="graduated-list" style="background:#f5f5f3;border-radius:8px;padding:12px;
+           max-height:200px;overflow-y:auto;font-size:13px;"></div>
+      <div style="margin-top:16px;text-align:right;">
+        <button onclick="document.getElementById('graduated-overlay').style.display='none'"
+                style="background:#185FA5;color:#fff;border:none;border-radius:8px;
+                       padding:10px 20px;cursor:pointer;">Done</button>
+      </div>
+    </div>
+  </div>
+
   <div class="main-nav">
     <button class="main-tab active" data-view="attendance">📋 Attendance</button>
     <button class="main-tab" id="analytics-tab" data-view="analytics">📊 Analytics</button>
@@ -370,8 +413,6 @@ tbody td{padding:6px 8px;vertical-align:middle}
         <option value="8">Class 8</option>
         <option value="9">Class 9</option>
         <option value="10">Class 10</option>
-        <option value="11">Class 11</option>
-        <option value="12">Class 12</option>
       </select>
     </div>
     <div class="modal-group">
@@ -632,6 +673,7 @@ function showApp(user){
   
   buildSundayBtns();
   renderCurrentSection();
+  checkYearEndPromotion();
 }
 
 function signIn(){
@@ -707,7 +749,20 @@ function buildSundayBtns(){
   const row=document.getElementById('sundays-row');row.innerHTML='';
   if(!sundays.length){row.innerHTML='<span style="font-size:11px;color:#888">No Sundays found</span>';return;}
   const dStrs=sundays.map(fmtDate),todayStr=fmtDate(new Date());
-  if(!curDate||!dStrs.includes(curDate))curDate=dStrs[0];
+  if(!curDate||!dStrs.includes(curDate)){
+    // If today is a Sunday in this month's list, select it
+    if(dStrs.includes(todayStr)){
+      curDate=todayStr;
+    } else {
+      // Find the most recent past Sunday in this month
+      const pastSundays=dStrs.filter(ds=>ds<=todayStr);
+      if(pastSundays.length>0){
+        curDate=pastSundays[pastSundays.length-1]; // last past Sunday
+      } else {
+        curDate=dStrs[0]; // fallback to first Sunday if all are future
+      }
+    }
+  }
   dStrs.forEach(ds=>{
     const[,m,d]=ds.split('-').map(Number);
     const btn=document.createElement('button');
@@ -1148,6 +1203,137 @@ function renderAnalytics(){
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('service-worker.js').then(()=>console.log('SW registered')).catch(()=>console.log('SW register failed'));
 }
+
+// ===================== YEAR-END CLASS PROMOTION =====================
+
+function getLastSundayOfMay(year) {
+  // Find last Sunday of May
+  const d = new Date(year, 5, 0); // Last day of May
+  d.setDate(d.getDate() - d.getDay()); // Go back to Sunday
+  return d;
+}
+
+function getFirstSundayOfJune(year) {
+  const d = new Date(year, 5, 1); // June 1
+  const day = d.getDay();
+  const diff = day === 0 ? 0 : 7 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function fmtDateOnly(d) {
+  return d.toISOString().split('T')[0];
+}
+
+function checkYearEndPromotion() {
+  if(currentUserRole !== 'admin') return;
+
+  const today = new Date();
+  const year = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear();
+  const lastMaySunday = getLastSundayOfMay(today.getFullYear());
+  const firstJuneSunday = getFirstSundayOfJune(today.getFullYear());
+  const todayStr = fmtDateOnly(today);
+  const lastMayStr = fmtDateOnly(lastMaySunday);
+  const firstJuneStr = fmtDateOnly(firstJuneSunday);
+
+  // Check if promotion already done this year
+  const doneKey = 'promotion_done_' + today.getFullYear();
+  const alreadyDone = localStorage.getItem(doneKey) === 'true';
+
+  if(alreadyDone) return;
+
+  // Show reminder on last Sunday of May
+  if(todayStr === lastMayStr) {
+    document.getElementById('upgrade-banner').style.display = 'block';
+  }
+
+  // Auto-promote on first Sunday of June
+  if(todayStr === firstJuneStr) {
+    runClassPromotion(true); // true = auto (no confirm dialog)
+  }
+}
+
+async function runClassPromotion(auto = false) {
+  if(currentUserRole !== 'admin') {
+    showToast('Only admins can promote classes');
+    return;
+  }
+
+  // Collect all Class 10 students (will graduate)
+  const graduated = [];
+  const SECTIONS = ['old-middle', 'old-high', 'new-middle', 'new-high'];
+
+  SECTIONS.forEach(key => {
+    if(!students[key]) return;
+    students[key].forEach(s => {
+      const studentClass = typeof s === 'object' ? parseInt(s.class) : 0;
+      if(studentClass === 10) {
+        graduated.push({ name: typeof s === 'object' ? s.name : s, section: key });
+      }
+    });
+  });
+
+  // Confirm dialog (skip if auto)
+  if(!auto) {
+    const graduateNames = graduated.map(g => g.name).join(', ') || 'None';
+    const msg = `This will promote ALL students up one class.
+
+` +
+      `🎓 Class 10 students who will GRADUATE (removed):
+${graduateNames || 'None'}
+
+` +
+      `All other students move up one class (5→6, 6→7 ... 9→10).
+
+Proceed?`;
+    if(!confirm(msg)) return;
+  }
+
+  setSyncStatus('syncing', 'Promoting classes...');
+
+  try {
+    SECTIONS.forEach(key => {
+      if(!students[key]) return;
+      students[key] = students[key]
+        .map(s => {
+          if(typeof s === 'string') return s; // legacy string student
+          const cls = parseInt(s.class);
+          if(cls === 10) return null; // will be removed
+          return { ...s, class: String(cls + 1) };
+        })
+        .filter(Boolean); // remove graduated (null) students
+    });
+
+    await saveState();
+
+    // Mark promotion done for this year
+    localStorage.setItem('promotion_done_' + new Date().getFullYear(), 'true');
+
+    // Hide banner
+    document.getElementById('upgrade-banner').style.display = 'none';
+
+    // Show graduated students
+    if(graduated.length > 0) {
+      const list = document.getElementById('graduated-list');
+      list.innerHTML = graduated.map(g =>
+        `<div style="padding:6px 0;border-bottom:1px solid #e0e0dc;">
+          🎓 <strong>${g.name}</strong> 
+          <span style="color:#888;font-size:11px;">(${g.section.replace('-',' ')})</span>
+        </div>`
+      ).join('');
+      document.getElementById('graduated-overlay').style.display = 'flex';
+    }
+
+    renderCurrentSection();
+    showToast('✅ All classes promoted successfully!');
+    setSyncStatus('synced', 'Classes promoted');
+
+  } catch(e) {
+    setSyncStatus('error', 'Promotion failed');
+    showToast('Error: ' + e.message);
+  }
+}
+
 </script>
 </body>
 </html>
