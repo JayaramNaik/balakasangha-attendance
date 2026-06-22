@@ -412,6 +412,70 @@ tbody td{padding:6px 8px;vertical-align:middle}
     </div>
   </div>
 
+
+  <!-- ── Delete Student Modal ── -->
+  <div id="delete-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
+       z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:16px;padding:28px;max-width:440px;width:92%;
+                box-shadow:0 8px 32px rgba(0,0,0,.18);">
+
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+        <span style="font-size:28px;">🗑</span>
+        <div>
+          <h3 style="margin:0;color:#c0392b;" id="delete-modal-title">Remove Student</h3>
+          <p style="margin:4px 0 0;font-size:12px;color:#888;" id="delete-modal-subtitle"></p>
+        </div>
+      </div>
+
+      <p style="font-size:13px;color:#555;margin-bottom:20px;">
+        What would you like to do with <strong id="delete-student-name"></strong>'s attendance history?
+      </p>
+
+      <!-- Option A — Keep records -->
+      <div onclick="selectDeleteOption('keep')" id="delete-opt-keep"
+           style="border:2px solid #e0e0dc;border-radius:10px;padding:14px;margin-bottom:10px;
+                  cursor:pointer;transition:all 0.2s;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">📦</span>
+          <div>
+            <div style="font-weight:600;font-size:13px;color:#333;">Keep attendance records</div>
+            <div style="font-size:11px;color:#888;margin-top:2px;">
+              Records stay in database. If re-added, old attendance (3/4 etc.) will be restored.
+              Best if student was accidentally removed.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Option B — Delete records -->
+      <div onclick="selectDeleteOption('delete')" id="delete-opt-delete"
+           style="border:2px solid #e0e0dc;border-radius:10px;padding:14px;margin-bottom:20px;
+                  cursor:pointer;transition:all 0.2s;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:20px;">🧹</span>
+          <div>
+            <div style="font-weight:600;font-size:13px;color:#333;">Delete attendance records</div>
+            <div style="font-size:11px;color:#888;margin-top:2px;">
+              All records permanently deleted. If re-added, starts fresh from 0.
+              Best if student left and won't return.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button onclick="closeDeleteModal()"
+                style="background:#f0f0ec;color:#333;border:none;border-radius:8px;
+                       padding:10px 20px;cursor:pointer;font-size:13px;">Cancel</button>
+        <button onclick="confirmDeleteStudent()" id="delete-confirm-btn"
+                style="display:none;background:#c0392b;color:#fff;border:none;border-radius:8px;
+                       padding:10px 20px;cursor:pointer;font-size:13px;font-weight:600;">
+          Remove Student
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Graduated students modal ── -->
   <div id="graduated-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
        z-index:9999;align-items:center;justify-content:center;">
@@ -1093,28 +1157,99 @@ async function markAll(key,type){
   showToast('All marked '+(type==='P'?'present':'absent'));
 }
 
-async function removeStudent(key,idx){
-  if(!confirm('Remove student?'))return;
-  const name=typeof students[key][idx]==='string'?students[key][idx]:students[key][idx].name;
-  setSyncStatus('syncing','Removing...');
-  try{
-    students[key].splice(idx,1);
-    const newRecords={};
-    Object.keys(records).forEach(k=>{
-      if(!k.startsWith(key+'|')){ newRecords[k]=records[k]; return; }
-      const parts=k.split('|');
-      const i=parseInt(parts[2],10); const date=parts[1];
-      if(i<idx) newRecords[k]=records[k];
-      else if(i>idx){
-        const suffix=k.substring(k.lastIndexOf('|'));
-        newRecords[key+'|'+date+'|'+(i-1)+suffix]=records[k];
+// Delete modal state
+let deleteContext = { key: null, idx: null, name: '', option: null };
+
+function removeStudent(key, idx) {
+  const student = students[key][idx];
+  const name = typeof student === 'string' ? student : student.name;
+  deleteContext = { key, idx, name, option: null };
+
+  document.getElementById('delete-student-name').textContent = name;
+  document.getElementById('delete-modal-subtitle').textContent =
+    'This will remove them from the ' + (SECTIONS[key]||key) + ' list.';
+
+  // Reset options
+  selectDeleteOption(null);
+  document.getElementById('delete-confirm-btn').style.display = 'none';
+  document.getElementById('delete-overlay').style.display = 'flex';
+}
+
+function selectDeleteOption(option) {
+  deleteContext.option = option;
+  const keepEl = document.getElementById('delete-opt-keep');
+  const delEl  = document.getElementById('delete-opt-delete');
+  const btnEl  = document.getElementById('delete-confirm-btn');
+
+  keepEl.style.border = '2px solid #e0e0dc';
+  keepEl.style.background = '#fff';
+  delEl.style.border  = '2px solid #e0e0dc';
+  delEl.style.background = '#fff';
+
+  if(option === 'keep') {
+    keepEl.style.border = '2px solid #1D9E75';
+    keepEl.style.background = '#f0faf6';
+    btnEl.style.display = 'inline-block';
+    btnEl.textContent = '📦 Remove & Keep Records';
+    btnEl.style.background = '#1D9E75';
+  } else if(option === 'delete') {
+    delEl.style.border = '2px solid #c0392b';
+    delEl.style.background = '#fdf0f0';
+    btnEl.style.display = 'inline-block';
+    btnEl.textContent = '🧹 Remove & Delete Records';
+    btnEl.style.background = '#c0392b';
+  }
+}
+
+function closeDeleteModal() {
+  document.getElementById('delete-overlay').style.display = 'none';
+  deleteContext = { key: null, idx: null, name: '', option: null };
+}
+
+async function confirmDeleteStudent() {
+  const { key, idx, name, option } = deleteContext;
+  if(!key || idx === null || !option) return;
+
+  closeDeleteModal();
+  setSyncStatus('syncing', 'Removing...');
+
+  try {
+    students[key].splice(idx, 1);
+    const newRecords = {};
+
+    Object.keys(records).forEach(k => {
+      if(!k.startsWith(key+'|')){ newRecords[k] = records[k]; return; }
+      const parts = k.split('|');
+      const i = parseInt(parts[2], 10);
+      const rest = parts.slice(3).join('|');
+      const date = parts[1];
+      const suffix = rest ? '|' + rest : '';
+
+      if(option === 'keep') {
+        // Keep records but re-index shifted students
+        if(i < idx)  newRecords[k] = records[k];
+        else if(i > idx) newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k];
+        // i === idx: keep records at a special "archived" slot (just skip re-indexing)
+        // Actually for keep: store at same idx but student is gone — 
+        // they'll reattach if student re-added at same position
+        else newRecords[k] = records[k]; // keep at original idx
+      } else {
+        // Delete option — skip records at idx, re-index higher ones
+        if(i < idx)  newRecords[k] = records[k];
+        else if(i > idx) newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k];
+        // i === idx: drop them (deleted)
       }
     });
-    records=newRecords;
+
+    records = newRecords;
     await saveState();
     renderSection(key);
-    showToast(name+' removed');
-  }catch(e){setSyncStatus('error','Failed to remove');showToast('Error removing student');}
+    showToast(name + ' removed ' + (option === 'keep' ? '(records kept)' : '(records deleted)'));
+    setSyncStatus('synced', 'Saved');
+  } catch(e) {
+    setSyncStatus('error', 'Failed to remove');
+    showToast('Error removing student');
+  }
 }
 
 function filterTable(key){
