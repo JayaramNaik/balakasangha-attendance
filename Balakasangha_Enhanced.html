@@ -1108,12 +1108,11 @@ async function confirmAddStudent(){
     // This prevents inheriting attendance from any previously deleted student
     const newIdx = students[addStudentContext.key].length - 1;
     const skey = addStudentContext.key;
-    const keysToDelete = Object.keys(records).filter(k => {
+    // Clear ALL records at this new index — prevents inheriting deleted student's data
+    Object.keys(records).forEach(k => {
       const parts = k.split('|');
-      // Match: section|date|index or section|date|index|leave or section|date|index|tracker
-      return parts[0] === skey && parseInt(parts[2]) === newIdx;
+      if(parts[0] === skey && parseInt(parts[2]) === newIdx) delete records[k];
     });
-    keysToDelete.forEach(k => delete records[k]);
     await saveState();
     renderSection(addStudentContext.key);
     closeAddStudentModal();
@@ -1226,18 +1225,15 @@ async function confirmDeleteStudent() {
       const suffix = rest ? '|' + rest : '';
 
       if(option === 'keep') {
-        // Keep records but re-index shifted students
-        if(i < idx)  newRecords[k] = records[k];
-        else if(i > idx) newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k];
-        // i === idx: keep records at a special "archived" slot (just skip re-indexing)
-        // Actually for keep: store at same idx but student is gone — 
-        // they'll reattach if student re-added at same position
-        else newRecords[k] = records[k]; // keep at original idx
+        // KEEP: preserve records at idx, re-index records above idx down by 1
+        if(i < idx)  newRecords[k] = records[k];          // below — unchanged
+        else if(i === idx) newRecords[k] = records[k];    // target — keep as-is
+        else newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k]; // above — shift down
       } else {
-        // Delete option — skip records at idx, re-index higher ones
-        if(i < idx)  newRecords[k] = records[k];
-        else if(i > idx) newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k];
-        // i === idx: drop them (deleted)
+        // DELETE: drop all records at idx, shift records above idx down by 1
+        if(i < idx)  newRecords[k] = records[k];          // below — unchanged
+        else if(i === idx) { /* DROP — do not copy */ }   // target — deleted
+        else newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k]; // above — shift down
       }
     });
 
