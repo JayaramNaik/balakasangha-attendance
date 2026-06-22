@@ -802,6 +802,8 @@ function getSundays(year,month){
   return res;
 }
 function fmtDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+// Display format DD-MM-YYYY (for showing to users)
+function fmtDisplay(ds){if(!ds)return '';const[y,m,d]=ds.split('-');return `${d}-${m}-${y}`;}
 function fmtShort(ds){const[,m,d]=ds.split('-').map(Number);return d+' '+MONTHS[m-1].slice(0,3);}
 function fmtFull(ds){const[y,m,d]=ds.split('-').map(Number);return new Date(y,m-1,d,12).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'});}
 function getCurrentTime(){
@@ -981,7 +983,7 @@ function renderSection(key){
     if(currentUserRole==='admin'){
       const tracker=getAttendanceTracker(key,curDate,i);
       const markedInfo = tracker.name
-        ? `<span style="color:#185FA5;font-weight:600">${tracker.name}</span><br><span style="color:#aaa;font-size:10px">${tracker.time}</span>`
+        ? `<span style="color:#185FA5;font-weight:600">${tracker.name}</span><br><span style="color:#aaa;font-size:10px">${tracker.time} ${fmtDisplay(tracker.date)}</span>`
         : `<span style="color:#ccc">—</span>`;
       html+=`<td class="col-tracker">${rec ? markedInfo : '<span style="color:#ccc">—</span>'}</td>`;
       html+=`<td class="col-del"><button class="del-btn" onclick="removeStudent('${key}',${i})">🗑</button></td>`;
@@ -1145,7 +1147,7 @@ function exportExcel(key){
     const studentClass=typeof student==='string'?'':student.class||'';
     const joiningDate=typeof student==='string'?'':student.joiningDate||'';
     const s=getStats(key,i);
-    rows.push([i+1,name,studentClass,joiningDate,...sundays.map(d=>{
+    rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
       const r=records[key+'|'+d+'|'+i];
       const leave=getLeaveStatus(key,d,i);
       if(r==='P')return'P';
@@ -1176,7 +1178,7 @@ function exportAllExcel(){
       const studentClass=typeof student==='string'?'':student.class||'';
       const joiningDate=typeof student==='string'?'':student.joiningDate||'';
       const s=getStats(key,i);
-      rows.push([i+1,name,studentClass,joiningDate,...sundays.map(d=>{
+      rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
         const r=records[key+'|'+d+'|'+i];
         const leave=getLeaveStatus(key,d,i);
         if(r==='P')return'P';
@@ -1429,9 +1431,9 @@ function downloadTemplate() {
   // Create Excel template using XLSX
   const ws = XLSX.utils.aoa_to_sheet([
     ['Name', 'Class', 'Joining Date'],
-    ['Ravi Kumar', '7', '2026-06-22'],
-    ['Priya Sharma', '8', '2026-06-22'],
-    ['Arjun Naik', '5', '2026-06-22'],
+    ['Ravi Kumar', '7', '22-06-2026'],
+    ['Priya Sharma', '8', '22-06-2026'],
+    ['Arjun Naik', '5', '22-06-2026'],
   ]);
   ws['!cols'] = [{wch:25},{wch:10},{wch:15}];
   const wb = XLSX.utils.book_new();
@@ -1457,7 +1459,13 @@ function handleBulkFile(event) {
         const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
         rows = lines.slice(1).map(line => {
           const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-          return { name: vals[0]||'', class: vals[1]||'', joiningDate: vals[2]||'' };
+          const rawDate = vals[2]||'';
+          let joiningDate = rawDate;
+          if(rawDate.match(/^\d{2}-\d{2}-\d{4}$/)){
+            const [d,m,y] = rawDate.split('-');
+            joiningDate = y+'-'+m+'-'+d;
+          }
+          return { name: vals[0]||'', class: vals[1]||'', joiningDate };
         });
       } else {
         // Parse Excel
@@ -1468,7 +1476,16 @@ function handleBulkFile(event) {
         rows = json.map(r => ({
           name: (r['Name'] || r['name'] || '').toString().trim(),
           class: (r['Class'] || r['class'] || '').toString().trim(),
-          joiningDate: (r['Joining Date'] || r['joining date'] || r['JoiningDate'] || fmtDate(new Date())).toString().trim()
+          joiningDate: (() => {
+              let raw = (r['Joining Date'] || r['joining date'] || r['JoiningDate'] || '').toString().trim();
+              if(!raw) return fmtDate(new Date());
+              // Convert DD-MM-YYYY to YYYY-MM-DD for internal storage
+              if(raw.match(/^\d{2}-\d{2}-\d{4}$/)) {
+                const [d,m,y] = raw.split('-');
+                return y+'-'+m+'-'+d;
+              }
+              return raw; // already YYYY-MM-DD
+            })()
         }));
       }
 
