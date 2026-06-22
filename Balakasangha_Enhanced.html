@@ -1038,16 +1038,16 @@ async function confirmAddStudent(){
       class:studentClass,
       joiningDate:joiningDate
     });
-    // Clear any stale records at the new student's index to prevent
-    // inheriting attendance from a previously deleted student
+    // Clear ALL stale records at the new student's index across ALL dates
+    // This prevents inheriting attendance from any previously deleted student
     const newIdx = students[addStudentContext.key].length - 1;
     const skey = addStudentContext.key;
-    Object.keys(records).forEach(k => {
+    const keysToDelete = Object.keys(records).filter(k => {
       const parts = k.split('|');
-      if(parts[0] === skey && parseInt(parts[2]) === newIdx) {
-        delete records[k];
-      }
+      // Match: section|date|index or section|date|index|leave or section|date|index|tracker
+      return parts[0] === skey && parseInt(parts[2]) === newIdx;
     });
+    keysToDelete.forEach(k => delete records[k]);
     await saveState();
     renderSection(addStudentContext.key);
     closeAddStudentModal();
@@ -1542,11 +1542,11 @@ async function confirmBulkImport() {
   try {
     newStudents.forEach(s => {
       const newIdx = students[key].length;
-      // Clear any stale records at this index
-      Object.keys(records).forEach(k => {
+      // Clear ALL stale records at this index across all dates
+      Object.keys(records).filter(k => {
         const parts = k.split('|');
-        if(parts[0] === key && parseInt(parts[2]) === newIdx) delete records[k];
-      });
+        return parts[0] === key && parseInt(parts[2]) === newIdx;
+      }).forEach(k => delete records[k]);
       students[key].push(s);
     });
 
