@@ -752,7 +752,8 @@ async function saveState(){
   setSyncStatus('syncing','Saving...');
   try{
     if(stateDoc){
-      await stateDoc.set({students,records}, {merge:true});
+      // Use set WITHOUT merge so deleted records are actually removed from Firestore
+      await stateDoc.set({students, records});
       setSyncStatus('synced','Saved to Firebase ✓');
     } else {
       throw new Error('Firebase unavailable');
