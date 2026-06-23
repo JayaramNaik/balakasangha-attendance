@@ -1115,23 +1115,24 @@ async function confirmAddStudent(){
       if(parts[0] === skey && parseInt(parts[2]) === newIdx) delete records[k];
     });
 
-    // Restore archived records if this student was previously kept
-    const safeN = name.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase();
-    const archivePrefix = skey + '|';
-    const archiveSuffix = '__archive__' + safeN;
+    // Restore archived records if this student was previously removed with "keep"
+    const safeN = name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const arcTag = '__arc_' + safeN;
     const archiveKeys = Object.keys(records).filter(k =>
-      k.startsWith(archivePrefix) && k.includes(archiveSuffix)
+      k.startsWith(skey + '|') && k.includes(arcTag)
     );
 
     if(archiveKeys.length > 0){
       archiveKeys.forEach(k => {
-        // Restore: replace __archive__name with new index
-        const restored = k.replace('|__archive__'+safeN+'|', '|'+newIdx+'|')
-                          .replace('|__archive__'+safeN, '|'+newIdx);
+        // k = section|date|__arc_name|extra  OR  section|date|__arc_name
+        const parts = k.split('|');
+        const date  = parts[1];
+        const extra = parts[3] ? '|' + parts[3] : '';
+        const restored = skey + '|' + date + '|' + newIdx + extra;
         records[restored] = records[k];
         delete records[k];
       });
-      showToast('Previous attendance restored for ' + name + '!');
+      showToast('✅ Previous attendance restored for ' + name + '!');
     }
 
     await saveState();
@@ -1234,52 +1235,65 @@ async function confirmDeleteStudent() {
   setSyncStatus('syncing', 'Removing...');
 
   try {
+    // Step 1: Remove student from array
     students[key].splice(idx, 1);
+
+    // Step 2: Build new records object
     const newRecords = {};
+    const safeN = name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
 
     Object.keys(records).forEach(k => {
-      if(!k.startsWith(key+'|')){ newRecords[k] = records[k]; return; }
-      const parts = k.split('|');
-      const i = parseInt(parts[2], 10);
-      const rest = parts.slice(3).join('|');
-      const date = parts[1];
-      const suffix = rest ? '|' + rest : '';
+      // Keep records from other sections unchanged
+      if(!k.startsWith(key + '|')) {
+        newRecords[k] = records[k];
+        return;
+      }
 
-      if(option === 'keep') {
-        // KEEP: archive records by student name, re-index students above
-        if(i < idx) {
-          newRecords[k] = records[k]; // below — unchanged
-        } else if(i === idx) {
-          // Archive with student name as key so we can restore later
-          const safeN = name.replace(/[^a-zA-Z0-9]/g,'_').toLowerCase();
-          const archiveKey = k.replace(
-            key+'|'+date+'|'+idx,
-            key+'|'+date+'|__archive__'+safeN
-          );
+      // Parse key: section|date|index|optional
+      const parts = k.split('|');
+      const section = parts[0];
+      const date    = parts[1];
+      const idxStr  = parts[2];
+      const extra   = parts[3] || '';
+      const i       = parseInt(idxStr, 10);
+
+      // Skip archived keys (already processed)
+      if(idxStr.startsWith('__')) {
+        newRecords[k] = records[k];
+        return;
+      }
+
+      const suffix = extra ? '|' + extra : '';
+
+      if(i < idx) {
+        // Below deleted index — keep unchanged
+        newRecords[k] = records[k];
+
+      } else if(i === idx) {
+        if(option === 'keep') {
+          // Archive under student name
+          const archiveKey = section + '|' + date + '|__arc_' + safeN + suffix;
           newRecords[archiveKey] = records[k];
-        } else {
-          newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k]; // above — shift down
         }
+        // If delete: just don't copy (drop it)
+
       } else {
-        // DELETE: drop all records at idx, shift records above idx down by 1
-        if(i < idx) {
-          newRecords[k] = records[k]; // below — unchanged
-        } else if(i === idx) {
-          // DROP — do not copy
-        } else {
-          newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k]; // above — shift down
-        }
+        // Above deleted index — shift down by 1
+        const newKey = section + '|' + date + '|' + (i - 1) + suffix;
+        newRecords[newKey] = records[k];
       }
     });
 
     records = newRecords;
     await saveState();
     renderSection(key);
-    showToast(name + ' removed ' + (option === 'keep' ? '(records kept)' : '(records deleted)'));
+    showToast(name + (option === 'keep' ? ' removed — records kept 📦' : ' removed — records deleted 🧹'));
     setSyncStatus('synced', 'Saved');
+
   } catch(e) {
+    console.error('Delete error:', e);
     setSyncStatus('error', 'Failed to remove');
-    showToast('Error removing student');
+    showToast('Error: ' + e.message);
   }
 }
 
