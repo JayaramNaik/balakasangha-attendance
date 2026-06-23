@@ -1098,27 +1098,26 @@ async function confirmAddStudent(){
 
   if(!addStudentContext.key) return;
 
-  // Check for duplicate name in ALL sections (not just current)
-  const allSections = Object.keys(students);
-  let duplicateFound = null;
-  allSections.forEach(sec => {
-    students[sec].forEach(s => {
-      const sName = typeof s === 'object' ? s.name : s;
-      if(sName.trim().toLowerCase() === name.toLowerCase()) {
-        duplicateFound = sec;
-      }
+  // Check for duplicate name in ALL sections
+  let duplicateSection = null;
+  Object.keys(students).forEach(sec => {
+    (students[sec] || []).forEach(s => {
+      const sName = (typeof s === 'object' ? s.name : s).trim().toLowerCase();
+      if(sName === name.toLowerCase()) duplicateSection = sec;
     });
   });
 
-  if(duplicateFound) {
-    const secLabel = SECTIONS[duplicateFound] || duplicateFound;
-    const proceed = confirm(
-      '⚠️ "' + name + '" already exists in ' + secLabel + '.\n\n' +
-      'Adding duplicate may cause confusion.\n\n' +
-      'If this is a different person with the same name, click OK to add anyway.\n' +
-      'Otherwise click Cancel and use a different name (e.g. "' + name + ' (2)").'
-    );
-    if(!proceed) return;
+  if(duplicateSection) {
+    const sectionNames = {
+      'old-middle': 'Old Students - Middle School',
+      'old-high':   'Old Students - High School',
+      'new-middle': 'New Students - Middle School',
+      'new-high':   'New Students - High School'
+    };
+    const secLabel = sectionNames[duplicateSection] || duplicateSection;
+    showToast('❌ "' + name + '" already exists in ' + secLabel + '!');
+    document.getElementById('modal-student-name').focus();
+    return; // BLOCK — no duplicates allowed
   }
   
   setSyncStatus('syncing','Adding student...');
