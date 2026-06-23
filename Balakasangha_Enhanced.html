@@ -1095,8 +1095,31 @@ async function confirmAddStudent(){
   if(!name){showToast('Enter student name');return;}
   if(!studentClass){showToast('Select class');return;}
   if(!joiningDate){showToast('Select joining date');return;}
-  
+
   if(!addStudentContext.key) return;
+
+  // Check for duplicate name in ALL sections (not just current)
+  const allSections = Object.keys(students);
+  let duplicateFound = null;
+  allSections.forEach(sec => {
+    students[sec].forEach(s => {
+      const sName = typeof s === 'object' ? s.name : s;
+      if(sName.trim().toLowerCase() === name.toLowerCase()) {
+        duplicateFound = sec;
+      }
+    });
+  });
+
+  if(duplicateFound) {
+    const secLabel = SECTIONS[duplicateFound] || duplicateFound;
+    const proceed = confirm(
+      '⚠️ "' + name + '" already exists in ' + secLabel + '.\n\n' +
+      'Adding duplicate may cause confusion.\n\n' +
+      'If this is a different person with the same name, click OK to add anyway.\n' +
+      'Otherwise click Cancel and use a different name (e.g. "' + name + ' (2)").'
+    );
+    if(!proceed) return;
+  }
   
   setSyncStatus('syncing','Adding student...');
   try{
