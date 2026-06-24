@@ -36,7 +36,7 @@ body.dark{
 body{font-family:system-ui,-apple-system,sans-serif;color:var(--text);background:var(--bg);font-size:14px;transition:background .3s,color .3s}
 .app{max-width:960px;margin:0 auto;padding:1rem}
 h1{font-size:22px;font-weight:700;margin-bottom:2px}
-.subtitle{font-size:13px;color:#666;margin-bottom:1rem}
+.subtitle{font-size:13px;color:var(--text2);margin-bottom:1rem}
 input,select,button{font-family:inherit;outline:none;border:1px solid var(--border);background:var(--surface);color:var(--text)}
 input:focus,select:focus{border-color:var(--blue-mid)}
 button{cursor:pointer;background:var(--surface)}
@@ -424,67 +424,67 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <!-- ── Bulk Import Modal ── -->
   <div id="bulk-import-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
        z-index:9999;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:16px;padding:28px;max-width:560px;width:94%;
-                box-shadow:0 8px 32px rgba(0,0,0,.18);max-height:90vh;overflow-y:auto;">
+    <div style="background:var(--surface);border-radius:16px;padding:28px;max-width:560px;width:94%;
+                box-shadow:0 8px 32px rgba(0,0,0,.18);max-height:90vh;overflow-y:auto;border:1px solid var(--border)">
 
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h3 style="margin:0;color:#185FA5;">📥 Bulk Import Students</h3>
-        <button onclick="closeBulkImport()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#888;">✕</button>
+        <h3 style="margin:0;color:var(--blue)">📥 Bulk Import Students</h3>
+        <button onclick="closeBulkImport()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">✕</button>
       </div>
 
       <!-- Download template -->
-      <div style="background:#EBF3FC;border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;">
+      <div style="background:var(--blue-light);border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;color:var(--text)">
         <strong>Step 1:</strong> Download the template, fill in student details, then upload.
         <br><br>
         <button onclick="downloadTemplate()" 
-                style="background:#185FA5;color:#fff;border:none;border-radius:6px;
+                style="background:var(--blue);color:#fff;border:none;border-radius:6px;
                        padding:8px 16px;cursor:pointer;font-size:13px;">
           ⬇ Download Excel Template
         </button>
       </div>
 
       <!-- Upload area -->
-      <div style="border:2px dashed #d0d0cc;border-radius:8px;padding:20px;text-align:center;
-                  margin-bottom:16px;cursor:pointer;" 
+      <div style="border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;
+                  margin-bottom:16px;cursor:pointer;background:var(--bg)" 
            onclick="document.getElementById('bulk-file-input').click()"
            id="drop-zone">
         <div style="font-size:32px;margin-bottom:8px;">📄</div>
-        <div style="font-size:13px;color:#666;">Click to upload Excel (.xlsx) or CSV file</div>
-        <div style="font-size:11px;color:#aaa;margin-top:4px;">Columns: Name, Class, Joining Date</div>
+        <div style="font-size:13px;color:var(--text2)">Click to upload Excel (.xlsx) or CSV file</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px;">Columns: Name, Class, Joining Date</div>
         <input type="file" id="bulk-file-input" accept=".xlsx,.csv" style="display:none"
                onchange="handleBulkFile(event)">
       </div>
 
       <!-- Preview table -->
       <div id="bulk-preview" style="display:none;">
-        <p style="font-size:13px;font-weight:600;color:#333;margin-bottom:8px;">
+        <p style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:8px;">
           Preview — <span id="bulk-count">0</span> students found:
         </p>
-        <div style="max-height:200px;overflow-y:auto;border:1px solid #e0e0dc;border-radius:8px;">
-          <table style="width:100%;border-collapse:collapse;font-size:12px;">
-            <thead style="background:#f5f5f3;position:sticky;top:0;">
+        <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--surface)">
+            <thead style="background:var(--table-head);position:sticky;top:0;">
               <tr>
-                <th style="padding:8px;text-align:left;border-bottom:1px solid #e0e0dc;">#</th>
-                <th style="padding:8px;text-align:left;border-bottom:1px solid #e0e0dc;">Name</th>
-                <th style="padding:8px;text-align:left;border-bottom:1px solid #e0e0dc;">Class</th>
-                <th style="padding:8px;text-align:left;border-bottom:1px solid #e0e0dc;">Joining Date</th>
-                <th style="padding:8px;text-align:left;border-bottom:1px solid #e0e0dc;">Status</th>
+                <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">#</th>
+                <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Name</th>
+                <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Class</th>
+                <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Joining Date</th>
+                <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Status</th>
               </tr>
             </thead>
             <tbody id="bulk-preview-body"></tbody>
           </table>
         </div>
-        <div id="bulk-errors" style="margin-top:8px;font-size:12px;color:#c0392b;"></div>
+        <div id="bulk-errors" style="margin-top:8px;font-size:12px;color:var(--red)"></div>
       </div>
 
-      <div id="bulk-status" style="font-size:13px;color:#666;margin:8px 0;min-height:20px;"></div>
+      <div id="bulk-status" style="font-size:13px;color:var(--text2);margin:8px 0;min-height:20px;"></div>
 
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
         <button onclick="closeBulkImport()" 
-                style="background:#f0f0ec;color:#333;border:none;border-radius:8px;
+                style="background:var(--border2);color:var(--text2);border:none;border-radius:8px;
                        padding:10px 20px;cursor:pointer;">Cancel</button>
         <button onclick="confirmBulkImport()" id="bulk-confirm-btn"
-                style="display:none;background:#1D9E75;color:#fff;border:none;border-radius:8px;
+                style="display:none;background:var(--green);color:#fff;border:none;border-radius:8px;
                        padding:10px 20px;cursor:pointer;font-weight:600;">
           ✅ Import All Students
         </button>
@@ -496,30 +496,30 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <!-- ── Delete Student Modal ── -->
   <div id="delete-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
        z-index:9999;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:16px;padding:28px;max-width:440px;width:92%;
-                box-shadow:0 8px 32px rgba(0,0,0,.18);">
+    <div style="background:var(--surface);border-radius:16px;padding:28px;max-width:440px;width:92%;
+                box-shadow:0 8px 32px rgba(0,0,0,.18);border:1px solid var(--border)">
 
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
         <span style="font-size:28px;">🗑</span>
         <div>
-          <h3 style="margin:0;color:#c0392b;" id="delete-modal-title">Remove Student</h3>
-          <p style="margin:4px 0 0;font-size:12px;color:#888;" id="delete-modal-subtitle"></p>
+          <h3 style="margin:0;color:var(--red)" id="delete-modal-title">Remove Student</h3>
+          <p style="margin:4px 0 0;font-size:12px;color:var(--text3)" id="delete-modal-subtitle"></p>
         </div>
       </div>
 
-      <p style="font-size:13px;color:#555;margin-bottom:20px;">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:20px;">
         What would you like to do with <strong id="delete-student-name"></strong>'s attendance history?
       </p>
 
       <!-- Option A — Keep records -->
       <div onclick="selectDeleteOption('keep')" id="delete-opt-keep"
-           style="border:2px solid #e0e0dc;border-radius:10px;padding:14px;margin-bottom:10px;
-                  cursor:pointer;transition:all 0.2s;">
+           style="border:2px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;
+                  cursor:pointer;transition:all 0.2s;background:var(--surface)">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:20px;">📦</span>
           <div>
-            <div style="font-weight:600;font-size:13px;color:#333;">Keep attendance records</div>
-            <div style="font-size:11px;color:#888;margin-top:2px;">
+            <div style="font-weight:600;font-size:13px;color:var(--text)">Keep attendance records</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px;">
               Records stay in database. If re-added, old attendance (3/4 etc.) will be restored.
               Best if student was accidentally removed.
             </div>
@@ -529,13 +529,13 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
       <!-- Option B — Delete records -->
       <div onclick="selectDeleteOption('delete')" id="delete-opt-delete"
-           style="border:2px solid #e0e0dc;border-radius:10px;padding:14px;margin-bottom:20px;
-                  cursor:pointer;transition:all 0.2s;">
+           style="border:2px solid var(--border);border-radius:10px;padding:14px;margin-bottom:20px;
+                  cursor:pointer;transition:all 0.2s;background:var(--surface)">
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:20px;">🧹</span>
           <div>
-            <div style="font-weight:600;font-size:13px;color:#333;">Delete attendance records</div>
-            <div style="font-size:11px;color:#888;margin-top:2px;">
+            <div style="font-weight:600;font-size:13px;color:var(--text)">Delete attendance records</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px;">
               All records permanently deleted. If re-added, starts fresh from 0.
               Best if student left and won't return.
             </div>
@@ -545,7 +545,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
       <div style="display:flex;gap:8px;justify-content:flex-end;">
         <button onclick="closeDeleteModal()"
-                style="background:#f0f0ec;color:#333;border:none;border-radius:8px;
+                style="background:var(--border2);color:var(--text2);border:none;border-radius:8px;
                        padding:10px 20px;cursor:pointer;font-size:13px;">Cancel</button>
         <button onclick="confirmDeleteStudent()" id="delete-confirm-btn"
                 style="display:none;background:#c0392b;color:#fff;border:none;border-radius:8px;
@@ -559,18 +559,18 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <!-- ── Graduated students modal ── -->
   <div id="graduated-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
        z-index:9999;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:16px;padding:28px;max-width:460px;width:90%;
-                box-shadow:0 8px 32px rgba(0,0,0,.18);">
-      <h3 style="margin:0 0 12px;color:#185FA5;">🎓 Graduated Students</h3>
-      <p style="font-size:13px;color:#666;margin:0 0 14px;">
+    <div style="background:var(--surface);border-radius:16px;padding:28px;max-width:460px;width:90%;
+                box-shadow:0 8px 32px rgba(0,0,0,.18);border:1px solid var(--border)">
+      <h3 style="margin:0 0 12px;color:var(--blue)">🎓 Graduated Students</h3>
+      <p style="font-size:13px;color:var(--text2);margin:0 0 14px;">
         These Class 10 students have completed Balakasangha and have been removed from the student list. 
         They can now register as Volunteers!
       </p>
-      <div id="graduated-list" style="background:#f5f5f3;border-radius:8px;padding:12px;
-           max-height:200px;overflow-y:auto;font-size:13px;"></div>
+      <div id="graduated-list" style="background:var(--bg);border-radius:8px;padding:12px;
+           max-height:200px;overflow-y:auto;font-size:13px;border:1px solid var(--border)"></div>
       <div style="margin-top:16px;text-align:right;">
         <button onclick="document.getElementById('graduated-overlay').style.display='none'"
-                style="background:#185FA5;color:#fff;border:none;border-radius:8px;
+                style="background:var(--blue);color:#fff;border:none;border-radius:8px;
                        padding:10px 20px;cursor:pointer;">Done</button>
       </div>
     </div>
@@ -1169,13 +1169,13 @@ function renderSection(key){
     const studentClass=typeof student==='string'?'':student.class||'';
     const rec=getRecord(key,curDate,i),s=getStats(key,i);
     const sessLabel=s.total>0?`${s.present} of ${s.total}${s.pct!==null?' ('+s.pct+'%)':''}`:'—';
-    const streakHtml=s.streak>0?`<span style="color:#E24B4A;font-size:11px">🔥${s.streak}</span>`:`<span style="color:#aaa;font-size:11px">—</span>`;
-    const barHtml=s.mTotal>0?`<div style="font-size:9px;color:#888">${s.mPresent}/${s.mTotal}</div><div class="pct-bar"><div class="pct-fill" style="width:${Math.round(s.mPresent/s.mTotal*100)}%;background:${barColor(Math.round(s.mPresent/s.mTotal*100))}"></div></div>`:'<span style="font-size:10px;color:#aaa">—</span>';
+    const streakHtml=s.streak>0?`<span style="color:#E24B4A;font-size:11px">🔥${s.streak}</span>`:`<span style="font-size:11px;color:var(--text4)">—</span>`;
+    const barHtml=s.mTotal>0?`<div style="font-size:9px;color:var(--text3)">${s.mPresent}/${s.mTotal}</div><div class="pct-bar"><div class="pct-fill" style="width:${Math.round(s.mPresent/s.mTotal*100)}%;background:${barColor(Math.round(s.mPresent/s.mTotal*100))}"></div></div>`:'<span style="font-size:10px;color:var(--text4)">—</span>';
     
     html+=`<tr data-name="${name.toLowerCase()}" data-rec="${rec||'U'}">
-      <td class="col-num" style="color:#aaa">${i+1}</td>
+      <td class="col-num" style="color:var(--text4)">${i+1}</td>
       <td class="col-name" style="font-weight:600">${name}</td>
-      <td class="col-class" style="font-size:11px;color:#666">${studentClass}</td>
+      <td class="col-class" style="font-size:11px;color:var(--text2)">${studentClass}</td>
       <td class="col-check"><input type="checkbox" class="present-check" ${rec==='P'?'checked':''} onchange="mark('${key}',${i},'P',this)"></td>
       <td class="col-check"><input type="checkbox" class="absent-check" ${rec==='A'?'checked':''} onchange="mark('${key}',${i},'A',this)"></td>
       <td class="col-sessions"><span class="pill ${pillClass(s.pct)}">${sessLabel}</span></td>
@@ -1365,20 +1365,20 @@ function selectDeleteOption(option) {
   const delEl  = document.getElementById('delete-opt-delete');
   const btnEl  = document.getElementById('delete-confirm-btn');
 
-  keepEl.style.border = '2px solid #e0e0dc';
-  keepEl.style.background = '#fff';
-  delEl.style.border  = '2px solid #e0e0dc';
-  delEl.style.background = '#fff';
+  keepEl.style.border = '2px solid var(--border)';
+  keepEl.style.background = 'var(--surface)';
+  delEl.style.border  = '2px solid var(--border)';
+  delEl.style.background = 'var(--surface)';
 
   if(option === 'keep') {
-    keepEl.style.border = '2px solid #1D9E75';
-    keepEl.style.background = '#f0faf6';
+    keepEl.style.border = '2px solid var(--green)';
+    keepEl.style.background = 'var(--green-light)';
     btnEl.style.display = 'inline-block';
     btnEl.textContent = '📦 Remove & Keep Records';
     btnEl.style.background = '#1D9E75';
   } else if(option === 'delete') {
     delEl.style.border = '2px solid #c0392b';
-    delEl.style.background = '#fdf0f0';
+    delEl.style.background = 'var(--red-light)';
     btnEl.style.display = 'inline-block';
     btnEl.textContent = '🧹 Remove & Delete Records';
     btnEl.style.background = '#c0392b';
@@ -1650,10 +1650,13 @@ function openHistoryModal(key, idx){
   const cls  = typeof student === 'object' ? 'Class '+(student.class||'?') : '';
   const secLabel = (SECTIONS[key]||{}).label || key;
 
-  // Gather all dates for this student
+  // Gather all dates for this student — exact index match using split
   const allDates = [...new Set(
     Object.keys(records)
-      .filter(k => k.startsWith(key+'|') && k.endsWith('|'+idx) && !k.includes('|tracker') && !k.includes('|leave'))
+      .filter(k => {
+        const parts = k.split('|');
+        return parts[0] === key && parts[2] === String(idx) && parts.length === 3;
+      })
       .map(k => k.split('|')[1])
   )].sort().reverse();
 
@@ -1986,9 +1989,9 @@ async function runClassPromotion(auto = false) {
 
   // Collect all Class 10 students (will graduate)
   const graduated = [];
-  const SECTIONS = ['old-middle', 'old-high', 'new-middle', 'new-high'];
+  const SECTION_KEYS = ['old-middle', 'old-high', 'new-middle', 'new-high'];
 
-  SECTIONS.forEach(key => {
+  SECTION_KEYS.forEach(key => {
     if(!students[key]) return;
     students[key].forEach(s => {
       const studentClass = typeof s === 'object' ? parseInt(s.class) : 0;
@@ -2017,7 +2020,7 @@ Proceed?`;
   setSyncStatus('syncing', 'Promoting classes...');
 
   try {
-    SECTIONS.forEach(key => {
+    SECTION_KEYS.forEach(key => {
       if(!students[key]) return;
       students[key] = students[key]
         .map(s => {
@@ -2041,9 +2044,9 @@ Proceed?`;
     if(graduated.length > 0) {
       const list = document.getElementById('graduated-list');
       list.innerHTML = graduated.map(g =>
-        `<div style="padding:6px 0;border-bottom:1px solid #e0e0dc;">
+        `<div style="padding:6px 0;border-bottom:1px solid var(--border);color:var(--text)">
           🎓 <strong>${g.name}</strong> 
-          <span style="color:#888;font-size:11px;">(${g.section.replace('-',' ')})</span>
+          <span style="color:var(--text3);font-size:11px;">(${g.section.replace('-',' ')})</span>
         </div>`
       ).join('');
       document.getElementById('graduated-overlay').style.display = 'flex';
@@ -2169,12 +2172,12 @@ function handleBulkFile(event) {
       bulkImportContext.students = validStudents;
       const tbody = document.getElementById('bulk-preview-body');
       tbody.innerHTML = previewRows.map((r, i) => `
-        <tr style="background:${r.valid ? 'transparent' : '#fff3f3'}">
-          <td style="padding:6px 8px;border-bottom:1px solid #f0f0ec;">${i+1}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #f0f0ec;font-weight:500;">${r.name||'—'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #f0f0ec;">${r.cls ? 'Class '+r.cls : '—'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #f0f0ec;">${r.joining||'—'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid #f0f0ec;">${r.status}</td>
+        <tr style="background:${r.valid ? 'transparent' : 'var(--red-light)'}">
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text)">${i+1}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-weight:500;color:var(--text)">${r.name||'—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${r.cls ? 'Class '+r.cls : '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${r.joining||'—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${r.status}</td>
         </tr>
       `).join('');
 
