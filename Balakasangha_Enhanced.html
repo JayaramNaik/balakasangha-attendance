@@ -1152,6 +1152,52 @@ function renderSection(key){
     </div>`;
   }
   
+  // ── Smart "Marked By" logic ──
+  // Collect all unique markers for this session
+  let markerSummary = '';
+  if(currentUserRole === 'admin' && st.length > 0 && curDate){
+    const markerMap = {}; // name -> count
+    st.forEach((_,i) => {
+      const t = getAttendanceTracker(key, curDate, i);
+      if(t.name && getRecord(key, curDate, i)){
+        markerMap[t.name] = (markerMap[t.name]||0) + 1;
+      }
+    });
+    const uniqueMarkers = Object.keys(markerMap);
+    if(uniqueMarkers.length === 1){
+      // Single marker — show as section banner, hide per-row column
+      const onlyMarker = uniqueMarkers[0];
+      // Get the time from first marked student
+      let markedTime = '';
+      for(let i=0;i<st.length;i++){
+        const t = getAttendanceTracker(key, curDate, i);
+        if(t.name === onlyMarker){ markedTime = t.time + ' ' + fmtDisplay(t.date); break; }
+      }
+      markerSummary = `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;
+        background:var(--blue-light);border-radius:8px;font-size:12px;margin-bottom:.6rem;border:1px solid var(--blue-mid)">
+        <span>✅</span>
+        <span>Marked by <strong style="color:var(--blue-dark)">${onlyMarker}</strong>
+        <span style="color:var(--text3);font-size:11px"> · ${markedTime}</span></span>
+      </div>`;
+    } else if(uniqueMarkers.length > 1){
+      // Multiple markers — show summary banner + keep per-row column
+      const parts = uniqueMarkers.map(n=>`<strong>${n}</strong> (${markerMap[n]})`).join(', ');
+      markerSummary = `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;
+        background:var(--amber-light);border-radius:8px;font-size:12px;margin-bottom:.6rem;border:1px solid var(--amber)">
+        <span>👥</span>
+        <span>Marked by ${parts} — see column for details</span>
+      </div>`;
+    }
+  }
+  const multipleMarkers = currentUserRole==='admin' && (() => {
+    if(!st.length || !curDate) return false;
+    const names = new Set();
+    st.forEach((_,i)=>{ const t=getAttendanceTracker(key,curDate,i); if(t.name && getRecord(key,curDate,i)) names.add(t.name); });
+    return names.size > 1;
+  })();
+
+  html += markerSummary;
+
   html+=`<table><thead><tr>
     <th class="col-num">#</th><th class="col-name">Name</th><th class="col-class">Class</th>
     <th class="col-check">Present</th><th class="col-check">Absent</th>
@@ -1159,7 +1205,8 @@ function renderSection(key){
     <th class="col-bar">This month</th>`;
   
   if(currentUserRole==='admin'){
-    html+=`<th class="col-tracker">Marked By</th><th class="col-edit"></th><th class="col-del"></th>`;
+    if(multipleMarkers) html+=`<th class="col-tracker">Marked By</th>`;
+    html+=`<th class="col-edit"></th><th class="col-del"></th>`;
   }
   html+=`<th style="width:28px"></th>`;
   html+=`</tr></thead><tbody id="tbody-${key}">`;
@@ -1183,11 +1230,13 @@ function renderSection(key){
       <td class="col-bar">${barHtml}</td>`;
     
     if(currentUserRole==='admin'){
-      const tracker=getAttendanceTracker(key,curDate,i);
-      const markedInfo = tracker.name
-        ? `<span style="color:var(--blue);font-weight:600">${tracker.name}</span><br><span style="font-size:10px;color:var(--text4)">${tracker.time} ${fmtDisplay(tracker.date)}</span>`
-        : `<span style="color:var(--text4)">—</span>`;
-      html+=`<td class="col-tracker">${rec ? markedInfo : '<span style="color:var(--text4)">—</span>'}</td>`;
+      if(multipleMarkers){
+        const tracker=getAttendanceTracker(key,curDate,i);
+        const markedInfo = tracker.name && rec
+          ? `<span style="color:var(--blue);font-weight:600">${tracker.name}</span><br><span style="font-size:10px;color:var(--text4)">${tracker.time}</span>`
+          : `<span style="color:var(--text4)">—</span>`;
+        html+=`<td class="col-tracker">${markedInfo}</td>`;
+      }
       html+=`<td class="col-edit"><button class="edit-btn" onclick="openEditStudentModal('${key}',${i})" title="Edit student">✏️</button></td>`;
       html+=`<td class="col-del"><button class="del-btn" onclick="removeStudent('${key}',${i})">🗑</button></td>`;
     }
