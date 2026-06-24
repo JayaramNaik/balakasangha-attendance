@@ -908,12 +908,7 @@ for(let y=curYear-2;y<=curYear+3;y++){const o=document.createElement('option');o
 
 async function initApp(){
   await initFirebase();
-  setInterval(async()=>{
-    if(currentUser){
-      await loadState();
-      renderCurrent();
-    }
-  }, 30000);
+  // Real-time sync handled by onSnapshot listener in initFirebase — no polling needed
 }
 
 function showLogin(){
