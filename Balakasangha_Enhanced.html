@@ -1232,10 +1232,22 @@ function renderSection(key){
     if(currentUserRole==='admin'){
       if(multipleMarkers){
         const tracker=getAttendanceTracker(key,curDate,i);
-        const markedInfo = tracker.name && rec
-          ? `<span style="color:var(--blue);font-weight:600">${tracker.name}</span><br><span style="font-size:10px;color:var(--text4)">${tracker.time}</span>`
-          : `<span style="color:var(--text4)">—</span>`;
-        html+=`<td class="col-tracker">${markedInfo}</td>`;
+        // Ledger style: show name only on first row this person marked, blank for subsequent
+        let markedCell = `<span style="color:var(--text4)">—</span>`;
+        if(tracker.name && rec){
+          // Find if this is the FIRST row this marker appears (looking at all previous marked rows)
+          let isFirst = true;
+          for(let j = 0; j < i; j++){
+            if(getRecord(key,curDate,j)){
+              const prev = getAttendanceTracker(key,curDate,j);
+              if(prev.name === tracker.name){ isFirst = false; break; }
+            }
+          }
+          markedCell = isFirst
+            ? `<span style="color:var(--blue);font-weight:600">${tracker.name}</span><br><span style="font-size:10px;color:var(--text4)">${tracker.time}</span>`
+            : `<span style="color:var(--text4);font-size:11px">↳</span>`;
+        }
+        html+=`<td class="col-tracker">${markedCell}</td>`;
       }
       html+=`<td class="col-edit"><button class="edit-btn" onclick="openEditStudentModal('${key}',${i})" title="Edit student">✏️</button></td>`;
       html+=`<td class="col-del"><button class="del-btn" onclick="removeStudent('${key}',${i})">🗑</button></td>`;
