@@ -1098,7 +1098,13 @@ function getStats(key,idx){
   const mSundays=getSundays(curYear,curMonth).map(fmtDate);
   const mTotal=mSundays.filter(d=>records[key+'|'+d+'|'+idx]).length;
   const mPresent=mSundays.filter(d=>records[key+'|'+d+'|'+idx]==='P').length;
-  return{present,total,pct,streak,mPresent,mTotal};
+  // Consecutive absences (from most recent session backwards)
+  let consAbsent=0;
+  for(const d of [...dates].reverse()){
+    if(records[key+'|'+d+'|'+idx]==='A') consAbsent++;
+    else break;
+  }
+  return{present,total,pct,streak,mPresent,mTotal,consAbsent};
 }
 
 function todayStats(key){
@@ -1214,10 +1220,21 @@ function renderSection(key){
     const sessLabel=s.total>0?`${s.present} of ${s.total}${s.pct!==null?' ('+s.pct+'%)':''}`:'—';
     const streakHtml=s.streak>0?`<span style="color:#E24B4A;font-size:11px">🔥${s.streak}</span>`:`<span style="font-size:11px;color:var(--text4)">—</span>`;
     const barHtml=s.mTotal>0?`<div style="font-size:9px;color:var(--text3)">${s.mPresent}/${s.mTotal}</div><div class="pct-bar"><div class="pct-fill" style="width:${Math.round(s.mPresent/s.mTotal*100)}%;background:${barColor(Math.round(s.mPresent/s.mTotal*100))}"></div></div>`:'<span style="font-size:10px;color:var(--text4)">—</span>';
-    
+
+    // At-risk: below 75% with at least 2 sessions recorded
+    const atRisk = s.total >= 2 && s.pct !== null && s.pct < 75;
+    const atRiskBadge = atRisk
+      ? `<span title="Attendance below 75% — at risk" style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;background:var(--red-light);color:var(--red-dark);font-weight:700;margin-left:5px;vertical-align:middle">⚠ AT RISK</span>`
+      : '';
+
+    // Consecutive absences: 2+ in a row
+    const consAbsBadge = s.consAbsent >= 2
+      ? `<span title="${s.consAbsent} Sundays absent in a row" style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;background:var(--amber-light);color:var(--amber-dark);font-weight:700;margin-left:5px;vertical-align:middle">⚡ ${s.consAbsent} ABSENT</span>`
+      : '';
+
     html+=`<tr data-name="${name.toLowerCase()}" data-rec="${rec||'U'}">
       <td class="col-num" style="color:var(--text4)">${i+1}</td>
-      <td class="col-name" style="font-weight:600">${name}</td>
+      <td class="col-name"><span style="font-weight:600">${name}</span>${atRiskBadge}${consAbsBadge}</td>
       <td class="col-class" style="font-size:11px;color:var(--text2)">${studentClass}</td>
       <td class="col-check"><input type="checkbox" class="present-check" ${rec==='P'?'checked':''} onchange="mark('${key}',${i},'P',this)"></td>
       <td class="col-check"><input type="checkbox" class="absent-check" ${rec==='A'?'checked':''} onchange="mark('${key}',${i},'A',this)"></td>
