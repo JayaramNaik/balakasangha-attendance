@@ -1599,12 +1599,7 @@ async function confirmEditStudent(){
 
   setSyncStatus('syncing', 'Saving...');
   try{
-    // Update name/class/joining in current section
-    const old = students[key][idx];
-    const oldName = typeof old === 'object' ? old.name : old;
-    students[key][idx] = { name: newName, class: newClass, joiningDate: newJoin };
-
-    // If section changed — move student + records
+    // If section changed — move student + migrate records
     if(newSection !== key){
       students[key].splice(idx, 1);
       const newIdx = students[newSection].length;
@@ -1631,6 +1626,9 @@ async function confirmEditStudent(){
         }
       });
       records = newRecords;
+    } else {
+      // Same section — just update in place
+      students[key][idx] = { name: newName, class: newClass, joiningDate: newJoin };
     }
 
     await saveState();
@@ -2204,6 +2202,20 @@ async function confirmBulkImport() {
   const key = bulkImportContext.key;
   const newStudents = bulkImportContext.students;
   if (!key || !newStudents.length) return;
+
+  // Check for duplicate names against existing students in ALL sections
+  const existingNames = new Set();
+  Object.keys(students).forEach(sec => {
+    students[sec].forEach(s => {
+      existingNames.add((typeof s === 'object' ? s.name : s).trim().toLowerCase());
+    });
+  });
+  const duplicates = newStudents.filter(s => existingNames.has(s.name.trim().toLowerCase()));
+  if(duplicates.length > 0){
+    document.getElementById('bulk-status').textContent =
+      `❌ Duplicate names found: ${duplicates.map(s=>s.name).join(', ')}. Remove them from the file and re-upload.`;
+    return;
+  }
 
   document.getElementById('bulk-confirm-btn').disabled = true;
   document.getElementById('bulk-status').textContent = `Importing ${newStudents.length} students...`;
