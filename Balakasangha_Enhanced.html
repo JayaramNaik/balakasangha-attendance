@@ -105,6 +105,7 @@ button{cursor:pointer;background:var(--surface)}
 /* Summary */
 .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr));gap:7px;margin-bottom:.8rem}
 .metric{background:var(--surface);border-radius:8px;padding:9px 11px;border:1px solid var(--border2)}
+.metric[onclick]:hover{background:var(--blue-light);border-color:var(--blue-mid);transition:all .15s}
 .metric-label{font-size:10px;color:var(--text3);margin-bottom:2px}
 .metric-value{font-size:20px;font-weight:700}
 .mv-blue{color:var(--blue)}.mv-green{color:var(--green)}.mv-red{color:var(--red)}
@@ -1124,9 +1125,9 @@ function renderSection(key){
   html+=`</div>
   <div class="summary-grid">
     <div class="metric"><div class="metric-label">Total</div><div class="metric-value mv-blue">${st.length}</div></div>
-    <div class="metric"><div class="metric-label">Present</div><div class="metric-value mv-green">${ts.present}</div></div>
-    <div class="metric"><div class="metric-label">Absent</div><div class="metric-value mv-red">${ts.absent}</div></div>
-    <div class="metric"><div class="metric-label">Not marked</div><div class="metric-value">${ts.unmarked}</div></div>
+    <div class="metric" onclick="setFilter('${key}','P')" title="Click to filter Present" style="cursor:pointer"><div class="metric-label">Present ▾</div><div class="metric-value mv-green">${ts.present}</div></div>
+    <div class="metric" onclick="setFilter('${key}','A')" title="Click to filter Absent" style="cursor:pointer"><div class="metric-label">Absent ▾</div><div class="metric-value mv-red">${ts.absent}</div></div>
+    <div class="metric" onclick="setFilter('${key}','U')" title="Click to show unmarked" style="cursor:pointer"><div class="metric-label">Not marked ▾</div><div class="metric-value">${ts.unmarked}</div></div>
     <div class="metric"><div class="metric-label">Rate</div><div class="metric-value" style="color:${barColor(rate)}">${rate}%</div></div>
   </div>
   <div class="controls">
@@ -1514,6 +1515,14 @@ async function confirmDeleteStudent() {
     setSyncStatus('error', 'Failed to remove');
     showToast('Error: ' + e.message);
   }
+}
+
+function setFilter(key, value){
+  const sel = document.getElementById('filter-'+key);
+  if(!sel) return;
+  // Toggle off if already active
+  sel.value = sel.value === value ? '' : value;
+  filterTable(key);
 }
 
 function filterTable(key){
