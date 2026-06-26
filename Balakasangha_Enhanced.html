@@ -1076,7 +1076,13 @@ document.querySelectorAll('.school-tab').forEach(btn=>{
   });
 });
 
-function renderCurrent(){if(curView==='attendance')renderCurrentSection();else renderAnalytics();}
+let _renderTimer=null;
+function renderCurrent(){
+  clearTimeout(_renderTimer);
+  _renderTimer=setTimeout(()=>{
+    if(curView==='attendance')renderCurrentSection();else renderAnalytics();
+  },50); // 50ms debounce prevents flicker on rapid section switching
+}
 function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);}
 
 // ===================== RECORDS =====================
@@ -1218,7 +1224,14 @@ function renderSection(key){
     const studentClass=typeof student==='string'?'':student.class||'';
     const rec=getRecord(key,curDate,i),s=getStats(key,i);
     const sessLabel=s.total>0?`${s.present} of ${s.total}${s.pct!==null?' ('+s.pct+'%)':''}`:'—';
-    const streakHtml=s.streak>0?`<span style="color:#E24B4A;font-size:11px">🔥${s.streak}</span>`:`<span style="font-size:11px;color:var(--text4)">—</span>`;
+    const streakHtml=s.streak>0?`<span style="color:#E24B4A;font-size:11px">🔥${s.streak}</span>`:(()=>{
+      let ca=0;const allS=getSundays(curYear,curMonth);
+      for(let si=allS.length-1;si>=0;si--){
+        const r=getRecord(key,fmtDate(allS[si]),idx);
+        if(r==='A')ca++;else break;
+      }
+      return ca>=3?`<span style="background:#FCEBEB;color:#D85A30;border-radius:4px;padding:2px 5px;font-size:10px;font-weight:700">⚡${ca}</span>`:'<span style="font-size:11px;color:var(--text4)">—</span>';
+    })();
     const barHtml=s.mTotal>0?`<div style="font-size:9px;color:var(--text3)">${s.mPresent}/${s.mTotal}</div><div class="pct-bar"><div class="pct-fill" style="width:${Math.round(s.mPresent/s.mTotal*100)}%;background:${barColor(Math.round(s.mPresent/s.mTotal*100))}"></div></div>`:'<span style="font-size:10px;color:var(--text4)">—</span>';
 
     // At-risk: below 75% with at least 2 sessions recorded
@@ -1257,7 +1270,7 @@ function renderSection(key){
             }
           }
           markedCell = isFirst
-            ? `<span style="color:var(--blue);font-weight:600">${tracker.name}</span><br><span style="font-size:10px;color:var(--text4)">${tracker.time}</span>`
+            ? `<span style="color:var(--blue);font-weight:600">${tracker.name}</span><br><span style="font-size:10px;color:var(--text4)">${tracker.time}${tracker.date?' '+fmtDisplay(tracker.date):''}</span>`
             : `<span style="color:var(--text4);font-size:11px">↳</span>`;
         }
         html+=`<td class="col-tracker">${markedCell}</td>`;
@@ -1385,13 +1398,13 @@ async function confirmAddStudent(){
 async function mark(key,idx,type,el){
   if(el.checked){
     setRecord(key,curDate,idx,type);
-    // Set attendance tracker
     setAttendanceTracker(key,curDate,idx,currentUserName,getCurrentTime(),fmtDate(new Date()));
+    // If marking Present — clear leave letter record from Firebase
+    if(type==='P') setLeaveStatus(key,curDate,idx,false);
     const oc=type==='P'?'absent-check':'present-check';
     const ob=el.closest('tr').querySelector('.'+oc);
     if(ob)ob.checked=false;
-  }
-  else {
+  } else {
     setRecord(key,curDate,idx,null);
     setLeaveStatus(key,curDate,idx,false);
   }
@@ -1406,9 +1419,12 @@ async function toggleLeaveStatus(key,idx,value){
 }
 
 async function markAll(key,type){
+  if(!confirm('Mark ALL '+(type==='P'?'PRESENT':'ABSENT')+'?\n\nThis will overwrite existing marks for all '+students[key].length+' students.'))return;
   students[key].forEach((_,i)=>{
     setRecord(key,curDate,i,type);
     setAttendanceTracker(key,curDate,i,currentUserName,getCurrentTime(),fmtDate(new Date()));
+    // Clear leave letters when marking all present
+    if(type==='P') setLeaveStatus(key,curDate,i,false);
   });
   renderSection(key);
   await saveState();
@@ -1765,7 +1781,7 @@ function openHistoryModal(key, idx){
       : rec==='A'
         ? `<span class="pill ${leave?'pill-amber':'pill-red'}">${leave?'A (Leave)':'✗ Absent'}</span>`
         : `<span class="pill pill-gray">—</span>`;
-    const markedBy = tracker.name ? `${tracker.name} <span style="color:var(--text4)">${tracker.time}</span>` : '—';
+    const markedBy = tracker.name ? `${tracker.name} <span style="color:var(--text4)">${tracker.time}${tracker.date?' '+fmtDisplay(tracker.date):''}</span>` : '—';
     return `<tr>
       <td>${fmtDisplay(d)}</td>
       <td>${MONTHS[parseInt(d.split('-')[1])-1]} ${d.split('-')[0]}</td>
@@ -2319,6 +2335,7 @@ async function confirmBulkImport() {
     closeBulkImport();
     showToast('✅ Imported ' + newStudents.length + ' students!');
     setSyncStatus('synced', 'Import complete');
+    setTimeout(()=>{const t=document.querySelector('table');if(t)t.scrollIntoView({behavior:'smooth',block:'start'});},400);
 
   } catch(e) {
     document.getElementById('bulk-status').textContent = '❌ Import failed: ' + e.message;
