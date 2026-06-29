@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Balakasangha Attendance — Vivekananda Balaka Sangha</title>
+<title>Vivekananda Balakasangha — Attendance</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#185FA5">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕉</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔱</text></svg>">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -42,8 +42,11 @@ input:focus,select:focus{border-color:var(--blue-mid)}
 button{cursor:pointer;background:var(--surface)}
 
 /* ===== ENHANCED LOGIN STYLES ===== */
-.login-container{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg, #185FA5 0%, #0C447C 100%);padding:1rem}
-.login-wrapper{width:100%;max-width:480px}
+.login-container{min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg, #185FA5 0%, #0C447C 100%);padding:1rem;
+  position:relative;overflow:hidden}
+.login-bg-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top;opacity:0.18;pointer-events:none;filter:grayscale(20%)}
+.login-wrapper{width:100%;max-width:480px;position:relative;z-index:1}
 .login-card{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}
 .login-header{background:linear-gradient(135deg, #185FA5 0%, #0C447C 100%);color:#fff;padding:2rem;text-align:center}
 .login-header h1{color:#fff;font-size:28px;margin-bottom:8px}
@@ -264,11 +267,23 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
 <!-- MODERN LOGIN SCREEN -->
 <div id="login-screen" class="login-container" style="display:none">
+  <!-- Swami Vivekananda background -->
+  <img class="login-bg-img" 
+       src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/Swami_Vivekananda.jpg/800px-Swami_Vivekananda.jpg" 
+       alt="" aria-hidden="true"
+       onerror="this.style.display='none'">
   <div class="login-wrapper">
     <div class="login-card">
       <div class="login-header">
-        <h1>🕉 Balakasangha</h1>
-        <p>Attendance Management System</p>
+        <!-- Ramakrishna Math & Mission Logo -->
+        <div style="display:flex;justify-content:center;margin-bottom:14px">
+          <img src="https://upload.wikimedia.org/wikipedia/en/thumb/9/96/Ramakrishna_Math_and_Mission_logo.svg/200px-Ramakrishna_Math_and_Mission_logo.svg.png"
+               alt="Ramakrishna Math and Mission"
+               style="height:70px;width:auto;filter:brightness(0) invert(1)"
+               onerror="this.outerHTML='<div style=\'font-size:48px;line-height:1\'>🔱</div>'">
+        </div>
+        <h1 style="color:#fff;font-size:22px;margin-bottom:4px">Vivekananda Balakasangha</h1>
+        <p style="font-size:13px;opacity:0.9">Attendance Management System</p>
       </div>
       <div class="login-content">
         <div id="error-message" class="error-message"></div>
@@ -309,7 +324,13 @@ tbody td{padding:6px 8px;vertical-align:middle}
     <div class="login-wrapper">
       <div class="login-card">
         <div class="login-header">
-          <h1>🕉 Balakasangha</h1>
+          <div style="display:flex;justify-content:center;margin-bottom:10px">
+            <img src="https://upload.wikimedia.org/wikipedia/en/thumb/9/96/Ramakrishna_Math_and_Mission_logo.svg/200px-Ramakrishna_Math_and_Mission_logo.svg.png"
+                 alt="Ramakrishna Math and Mission"
+                 style="height:54px;width:auto;filter:brightness(0) invert(1)"
+                 onerror="this.outerHTML='<div style=\'font-size:36px\'>🔱</div>'">
+          </div>
+          <h1 style="color:#fff;font-size:20px;margin-bottom:4px">Vivekananda Balakasangha</h1>
           <p>Create New Account</p>
         </div>
         <div class="login-content">
@@ -353,8 +374,8 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
 <!-- MAIN APP -->
 <div class="app" id="main-app" style="display:none">
-  <h1>🕉 Balakasangha Attendance</h1>
-  <p class="subtitle">Vivekananda Balaka Sangha — Sunday sessions tracker</p>
+  <h1>Vivekananda Balakasangha</h1>
+  <p class="subtitle">Attendance Management System — Sunday sessions tracker</p>
 
   <!-- User Info Bar -->
   <div class="user-info-bar">
@@ -371,7 +392,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
   <!-- Print header (only shown when printing) -->
   <div class="print-header" id="print-header">
-    <h2 style="margin-bottom:4px">🕉 Balakasangha Attendance Sheet</h2>
+    <h2 style="margin-bottom:4px">Vivekananda Balakasangha — Attendance Sheet</h2>
     <p id="print-subtitle" style="font-size:12px;color:#555;margin-bottom:8px"></p>
   </div>
 
@@ -1227,7 +1248,7 @@ function renderSection(key){
     const streakHtml=s.streak>0?`<span style="color:#E24B4A;font-size:11px">🔥${s.streak}</span>`:(()=>{
       let ca=0;const allS=getSundays(curYear,curMonth);
       for(let si=allS.length-1;si>=0;si--){
-        const r=getRecord(key,fmtDate(allS[si]),idx);
+        const r=getRecord(key,fmtDate(allS[si]),i);
         if(r==='A')ca++;else break;
       }
       return ca>=3?`<span style="background:#FCEBEB;color:#D85A30;border-radius:4px;padding:2px 5px;font-size:10px;font-weight:700">⚡${ca}</span>`:'<span style="font-size:11px;color:var(--text4)">—</span>';
@@ -1441,7 +1462,7 @@ function removeStudent(key, idx) {
 
   document.getElementById('delete-student-name').textContent = name;
   document.getElementById('delete-modal-subtitle').textContent =
-    'This will remove them from the ' + (SECTIONS[key]||key) + ' list.';
+    'This will remove them from the ' + (SECTIONS[key]?.label||key) + ' list.';
 
   // Reset options
   selectDeleteOption(null);
