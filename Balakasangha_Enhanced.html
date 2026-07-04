@@ -48,35 +48,30 @@ button{cursor:pointer;background:var(--surface)}
 .login-bg-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center top;opacity:1;pointer-events:none}
 .login-bg-overlay{position:absolute;bottom:0;left:0;right:0;height:60%;background:linear-gradient(to top,rgba(12,68,124,0.85) 0%,transparent 100%);pointer-events:none;z-index:0}
 .login-wrapper{width:100%;max-width:480px;position:relative;z-index:1;margin-top:auto}
-.login-card{background:rgba(255,255,255,0.88);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden;backdrop-filter:blur(4px)}
-.login-header{background:linear-gradient(135deg, #185FA5 0%, #0C447C 100%);color:#fff;padding:2rem;text-align:center}
-.login-header h1{color:#fff;font-size:28px;margin-bottom:8px}
-.login-header p{font-size:14px;opacity:0.95}
-.login-content{padding:2.5rem}
-.role-selector{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1.8rem}
-.role-btn{padding:14px;border:2px solid #e0e0dc;border-radius:12px;background:#fff;cursor:pointer;font-size:14px;font-weight:600;color:#666;transition:all 0.3s;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
-.role-btn:hover{border-color:#185FA5;color:#185FA5}
-.role-btn.active{border-color:#185FA5;background:#EBF3FC;color:#0C447C}
-.role-icon{font-size:24px}
+.login-card{background:transparent;border-radius:16px;box-shadow:none;overflow:hidden;border:none}
+.login-header{background:transparent;color:#fff;padding:2rem;text-align:center}
+.login-header h1{color:#fff;font-size:26px;margin-bottom:6px;text-shadow:0 2px 12px rgba(0,0,0,0.9),0 0 30px rgba(0,0,0,0.7)}
+.login-header p{font-size:13px;opacity:0.95;text-shadow:0 1px 8px rgba(0,0,0,0.9)}
+.login-content{padding:2rem}
 .form-group{margin-bottom:1.2rem}
-.form-group label{display:block;font-size:12px;font-weight:600;color:#555;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px}
-.form-input{width:100%;padding:12px 14px;border:1.5px solid #e0e0dc;border-radius:10px;font-size:14px;transition:all 0.3s}
-.form-input:focus{border-color:#185FA5;background:#f0f6ff}
-.form-input::placeholder{color:#aaa}
+.form-group label{display:block;font-size:12px;font-weight:700;color:#fff;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;text-shadow:0 1px 6px rgba(0,0,0,0.9)}
+.form-input{width:100%;padding:12px 14px;border:2px solid rgba(255,255,255,0.7);border-radius:10px;font-size:14px;transition:all 0.3s;background:rgba(0,0,0,0.35);color:#fff}
+.form-input:focus{border-color:#fff;background:rgba(0,0,0,0.45);outline:none}
+.form-input::placeholder{color:rgba(255,255,255,0.65)}
 .input-wrapper{position:relative;display:flex;align-items:center}
-.input-icon{position:absolute;left:14px;color:#999;font-size:16px;pointer-events:none}
+.input-icon{position:absolute;left:14px;font-size:16px;pointer-events:none}
 .input-wrapper .form-input{padding-left:40px}
-.btn-login{width:100%;padding:12px;background:linear-gradient(135deg, #185FA5 0%, #0C447C 100%);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.3s;margin-bottom:10px}
-.btn-login:hover{transform:translateY(-2px);box-shadow:0 10px 25px rgba(24,95,165,0.3)}
+.btn-login{width:100%;padding:13px;background:rgba(12,68,124,0.85);color:#fff;border:2px solid rgba(255,255,255,0.5);border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:all 0.3s;margin-bottom:10px;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
+.btn-login:hover{background:rgba(12,68,124,1);transform:translateY(-2px)}
 .btn-login:active{transform:translateY(0)}
-.divider{display:flex;align-items:center;gap:10px;margin:1.5rem 0;color:#999;font-size:12px}
-.divider::before{content:'';flex:1;height:1px;background:#e0e0dc}
-.divider::after{content:'';flex:1;height:1px;background:#e0e0dc}
-.btn-register{width:100%;padding:12px;background:#fff;color:#185FA5;border:2px solid #185FA5;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.3s}
-.btn-register:hover{background:#EBF3FC}
-.login-footer{padding:1.5rem;background:#f9f9f9;border-top:1px solid #e0e0dc;text-align:center;font-size:11px;color:#777}
-.role-select-prompt{font-size:12px;color:#888;margin-bottom:1rem;text-align:center}
-.error-message{background:#FCEBEB;border:1px solid #D85A30;color:#791F1F;padding:12px;border-radius:8px;font-size:13px;margin-bottom:1rem;display:none}
+.divider{display:flex;align-items:center;gap:10px;margin:1.2rem 0;color:rgba(255,255,255,0.8);font-size:12px;text-shadow:0 1px 4px rgba(0,0,0,0.8)}
+.divider::before{content:'';flex:1;height:1px;background:rgba(255,255,255,0.4)}
+.divider::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.4)}
+.btn-register{width:100%;padding:13px;background:transparent;color:#fff;border:2px solid rgba(255,255,255,0.7);border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;transition:all 0.3s;text-shadow:0 1px 4px rgba(0,0,0,0.6)}
+.btn-register:hover{background:rgba(255,255,255,0.15)}
+.login-footer{padding:1.2rem;background:transparent;border-top:1px solid rgba(255,255,255,0.3);text-align:center;font-size:11px;color:rgba(255,255,255,0.85);text-shadow:0 1px 4px rgba(0,0,0,0.8)}
+.role-select-prompt{font-size:12px;color:rgba(255,255,255,0.9);margin-bottom:1rem;text-align:center}
+.error-message{background:rgba(252,235,235,0.9);border:1px solid #D85A30;color:#791F1F;padding:12px;border-radius:8px;font-size:13px;margin-bottom:1rem;display:none}
 .error-message.show{display:block}
 
 /* Top bar */
