@@ -1,11 +1,13 @@
-const CACHE_NAME = 'balaka-v5';
+const CACHE_NAME = 'balaka-v6';
 const BASE = '/balakasangha-attendance';
 
 const ASSETS = [
   BASE + '/',
   BASE + '/index.html',
   BASE + '/Balakasangha_Enhanced.html',
-  BASE + '/manifest.json'
+  BASE + '/manifest.json',
+  BASE + '/swamiji.jpg',
+  BASE + '/rkmission_logo.png'
 ];
 
 self.addEventListener('install', event => {
@@ -20,16 +22,21 @@ self.addEventListener('install', event => {
       );
     })
   );
-  self.skipWaiting();
+  self.skipWaiting(); // activate immediately
 });
 
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
       Promise.all(
-        keys.map(k => { if (k !== CACHE_NAME) return caches.delete(k); return null; })
+        keys.map(k => {
+          if (k !== CACHE_NAME) {
+            console.log('[SW] Deleting old cache:', k);
+            return caches.delete(k);
+          }
+        })
       )
-    ).then(() => self.clients.claim())
+    ).then(() => self.clients.claim()) // take control of all tabs immediately
   );
 });
 
@@ -40,6 +47,7 @@ self.addEventListener('fetch', event => {
   const acceptHeader = req.headers.get('accept') || '';
   const isNavigation = req.mode === 'navigate' || acceptHeader.includes('text/html');
 
+  // For HTML pages: always try network first, fall back to cache
   if (isNavigation) {
     event.respondWith(
       fetch(req).then(res => {
@@ -51,6 +59,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // For other assets: cache first, then network
   event.respondWith(
     caches.match(req).then(cached =>
       cached || fetch(req).then(res => {
