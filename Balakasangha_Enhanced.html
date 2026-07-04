@@ -800,6 +800,41 @@ function persistLocal(){
   try{ localStorage.setItem('balaka_records', JSON.stringify(records)); }catch(e){}
 }
 
+// ===== OFFLINE SAFETY NET =====
+let pendingSync = false;
+let syncRetryTimer = null;
+
+function setPendingSync(val){
+  pendingSync = val;
+  try{ localStorage.setItem('balaka_pendingSync', val ? '1' : '0'); }catch(e){}
+}
+
+async function trySyncNow(){
+  if(!stateDoc || !navigator.onLine) return;
+  try{
+    await stateDoc.set({students, records});
+    setPendingSync(false);
+    setSyncStatus('synced','✓ Synced to Firebase');
+    showToast('✅ Offline marks synced successfully!');
+    if(syncRetryTimer){ clearInterval(syncRetryTimer); syncRetryTimer = null; }
+  }catch(e){ /* still offline, keep retrying */ }
+}
+
+window.addEventListener('online', ()=>{
+  if(pendingSync || localStorage.getItem('balaka_pendingSync')==='1'){
+    setSyncStatus('syncing','Internet restored — syncing...');
+    showToast('🌐 Internet back — syncing attendance...');
+    setTimeout(trySyncNow, 1500);
+  } else {
+    setSyncStatus('synced','Online');
+  }
+});
+
+window.addEventListener('offline', ()=>{
+  setSyncStatus('error','⚠️ Offline — marks saved locally');
+  showToast('⚠️ No internet — marks saved locally, will auto-sync when online');
+});
+
 // Role is determined automatically from Firebase adminEmails list
 
 function showLoginMode(){
@@ -821,6 +856,11 @@ async function initFirebase(){
     firebase.initializeApp(FIREBASE_CONFIG);
     auth = firebase.auth();
     db = firebase.firestore();
+    // Enable offline persistence - marks saved locally, auto-sync when internet returns
+    db.enablePersistence({ synchronizeTabs: true }).catch(err => {
+      if(err.code === 'failed-precondition') console.warn('[SW] Multiple tabs open, persistence in one tab only');
+      else if(err.code === 'unimplemented') console.warn('[SW] Browser does not support offline persistence');
+    });
     stateDoc = db.doc(STATE_DOC_PATH);
     adminsDoc = db.doc(ADMINS_DOC_PATH);
     volunteersDoc = db.doc(VOLUNTEERS_DOC_PATH);
@@ -910,18 +950,34 @@ async function loadState(){
 }
 
 async function saveState(){
+  // ALWAYS save locally first — zero data loss guarantee
+  persistLocal();
+
+  if(!navigator.onLine){
+    setPendingSync(true);
+    setSyncStatus('error','⚠️ Offline — saved locally');
+    if(!syncRetryTimer){
+      syncRetryTimer = setInterval(()=>{ if(navigator.onLine) trySyncNow(); }, 30000);
+    }
+    return;
+  }
+
   setSyncStatus('syncing','Saving...');
   try{
     if(stateDoc){
-      // Use set WITHOUT merge so deleted records are actually removed from Firestore
       await stateDoc.set({students, records});
+      setPendingSync(false);
       setSyncStatus('synced','Saved to Firebase ✓');
     } else {
       throw new Error('Firebase unavailable');
     }
   }catch(e){
-    persistLocal();
-    setSyncStatus('synced','Saved locally');
+    setPendingSync(true);
+    setSyncStatus('error','⚠️ Sync failed — saved locally');
+    showToast('⚠️ Could not reach server — saved locally, will auto-retry');
+    if(!syncRetryTimer){
+      syncRetryTimer = setInterval(()=>{ if(navigator.onLine) trySyncNow(); }, 30000);
+    }
   }
 }
 
