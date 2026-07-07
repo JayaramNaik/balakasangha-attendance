@@ -1586,7 +1586,6 @@ async function confirmAddStudent(){
     renderSection(addStudentContext.key);
     closeAddStudentModal();
     showToast(name+' added');
-    logAudit('student_added', {section:addStudentContext.key, sectionLabel:(SECTIONS[addStudentContext.key]||{}).label||addStudentContext.key, studentName:name});
   }catch(e){
     setSyncStatus('error','Failed to add student');
     showToast('Error adding student');
@@ -1738,7 +1737,6 @@ async function confirmDeleteStudent() {
     renderSection(key);
     showToast(name + (option === 'keep' ? ' removed — records kept 📦' : ' removed — records deleted 🧹'));
     setSyncStatus('synced', 'Saved');
-    logAudit('student_deleted', {section:key, sectionLabel:(SECTIONS[key]||{}).label||key, studentName:name, detail: option==='keep'?'Records kept':'Records deleted'});
 
   } catch(e) {
     console.error('Delete error:', e);
@@ -1969,7 +1967,6 @@ async function confirmEditStudent(){
     renderCurrentSection();
     closeEditStudentModal();
     showToast('✅ Student details updated!');
-    logAudit('student_edited', {section:newSection, sectionLabel:(SECTIONS[newSection]||{}).label||newSection, studentName:newName, detail: newSection!==key ? 'Moved from '+((SECTIONS[key]||{}).label||key) : ''});
   }catch(e){
     setSyncStatus('error','Save failed');
     showToast('Error: '+e.message);
@@ -2699,7 +2696,6 @@ async function toggleSessionLock(key){
     if(!confirm('Unlock '+secLabel+' for '+fmtFull(curDate)+'?\n\nMarks can be edited directly again until re-locked.')) return;
     delete locks[lockKey];
     await saveState();
-    logAudit('unlock', {section:key, sectionLabel:secLabel, date:curDate});
     showToast('🔓 Session unlocked');
   } else {
     // Both admins and volunteers can submit & lock a session they've
@@ -2711,7 +2707,6 @@ async function toggleSessionLock(key){
       lockedAt: new Date().toISOString()
     };
     await saveState();
-    logAudit('lock', {section:key, sectionLabel:secLabel, date:curDate});
     showToast('🔒 Session submitted and locked');
   }
   renderSection(key);
@@ -2755,7 +2750,6 @@ async function toggleAllSectionsLock(){
     if(!confirm('Unlock ALL sections for '+fmtFull(curDate)+'?\n\nMarks can be edited directly again in every section until re-locked.')) return;
     SEC_KEYS.forEach(k=>delete locks[k+'|'+curDate]);
     await saveState();
-    logAudit('unlock', {section:'ALL', sectionLabel:'All sections', date:curDate});
     showToast('🔓 All sections unlocked');
   } else {
     if(!confirm('Submit & lock ALL sections for '+fmtFull(curDate)+'?\n\nAfter this, marks in every section can only be changed through a correction request that you review.')) return;
@@ -2767,7 +2761,6 @@ async function toggleAllSectionsLock(){
       };
     });
     await saveState();
-    logAudit('lock', {section:'ALL', sectionLabel:'All sections', date:curDate});
     showToast('🔒 All sections submitted and locked');
   }
   renderCurrentSection();
@@ -2937,15 +2930,13 @@ async function rejectCorrection(id){
   }catch(e){ showToast('Error: '+e.message); }
 }
 
+// Only correction_* actions are ever logged (see logAudit call sites) and
+// the Audit Log view filters to these exclusively — no routine marks,
+// locks, or student edits, per the "corrections only" requirement.
 const AUDIT_ACTION_LABEL = {
-  lock: '🔒 Locked session',
-  unlock: '🔓 Unlocked session',
   correction_requested: '🔄 Correction requested',
   correction_approved: '✅ Correction approved',
-  correction_rejected: '❌ Correction rejected',
-  student_added: '➕ Student added',
-  student_edited: '✏️ Student edited',
-  student_deleted: '🗑️ Student removed'
+  correction_rejected: '❌ Correction rejected'
 };
 
 async function renderAuditLog(){
@@ -2955,9 +2946,14 @@ async function renderAuditLog(){
   if(!auditLogCollection){ el.innerHTML = '<div class="empty-state">Not connected.</div>'; return; }
   el.innerHTML = '<div class="empty-state">Loading audit log...</div>';
   try{
-    const snap = await auditLogCollection.orderBy('performedAt','desc').limit(200).get();
-    const entries = snap.docs.map(d=>d.data());
-    if(!entries.length){ el.innerHTML = '<div class="empty-state">No activity logged yet.</div>'; return; }
+    // Fetch a larger raw batch since we filter down to corrections only —
+    // older entries from before this filter existed (routine marks/locks)
+    // are skipped here, even though they still exist in Firestore.
+    const snap = await auditLogCollection.orderBy('performedAt','desc').limit(500).get();
+    const entries = snap.docs.map(d=>d.data())
+      .filter(e => e.action && e.action.startsWith('correction_'))
+      .slice(0, 200);
+    if(!entries.length){ el.innerHTML = '<div class="empty-state">No corrections logged yet.</div>'; return; }
     const fmtVal = v => v==='P' ? 'Present' : v==='A' ? 'Absent' : (v || '—');
     const rows = entries.map(e=>{
       const when = (e.performedAt && e.performedAt.toDate) ? e.performedAt.toDate().toLocaleString() : (e.performedAtLocal||'');
@@ -2976,7 +2972,7 @@ async function renderAuditLog(){
         <td style="font-size:12px">${e.performedBy||''}</td>
       </tr>`;
     }).join('');
-    el.innerHTML = `<h3 style="margin:6px 0 14px">🕵️ Audit Log <span style="font-size:12px;color:var(--text3);font-weight:400">(most recent 200 entries)</span></h3>
+    el.innerHTML = `<h3 style="margin:6px 0 14px">🕵️ Audit Log <span style="font-size:12px;color:var(--text3);font-weight:400">(corrections only — most recent 200)</span></h3>
       <table><thead><tr><th>When</th><th>Action</th><th>Section</th><th>Student</th><th>Detail</th><th>By</th></tr></thead><tbody>${rows}</tbody></table>`;
   }catch(e){
     el.innerHTML = '<div class="empty-state">Could not load audit log: '+e.message+'</div>';
