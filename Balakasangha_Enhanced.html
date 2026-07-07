@@ -455,13 +455,13 @@ tbody td{padding:6px 8px;vertical-align:middle}
                 box-shadow:0 8px 32px rgba(0,0,0,.18);max-height:90vh;overflow-y:auto;border:1px solid var(--border)">
 
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h3 style="margin:0;color:var(--blue)">📥 Bulk Import Students</h3>
+        <h3 id="bulk-import-title" style="margin:0;color:var(--blue)">📥 Bulk Import Students</h3>
         <button onclick="closeBulkImport()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">✕</button>
       </div>
 
       <!-- Download template -->
       <div style="background:var(--blue-light);border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;color:var(--text)">
-        <strong>Step 1:</strong> Download the template, fill in student details, then upload.
+        <strong>Step 1:</strong> Download the template, fill in details, then upload.
         <br><br>
         <button onclick="downloadTemplate()" 
                 style="background:var(--blue);color:#fff;border:none;border-radius:6px;
@@ -477,7 +477,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
            id="drop-zone">
         <div style="font-size:32px;margin-bottom:8px;">📄</div>
         <div style="font-size:13px;color:var(--text2)">Click to upload Excel (.xlsx) or CSV file</div>
-        <div style="font-size:11px;color:var(--text3);margin-top:4px;">Columns: Name, Class, Joining Date</div>
+        <div id="bulk-columns-hint" style="font-size:11px;color:var(--text3);margin-top:4px;">Columns: Name, Class, Joining Date</div>
         <input type="file" id="bulk-file-input" accept=".xlsx,.csv" style="display:none"
                onchange="handleBulkFile(event)">
       </div>
@@ -493,7 +493,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
               <tr>
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">#</th>
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Name</th>
-                <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Class</th>
+                <th id="bulk-secondary-col-header" style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Class</th>
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Joining Date</th>
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Status</th>
               </tr>
@@ -1361,7 +1361,7 @@ function renderSection(key){
     html+=`<div class="add-row">
       <input type="text" id="new-${key}" placeholder="Add ${isProfessionSection(key)?'volunteer':'student'} name..." onkeydown="if(event.key==='Enter')openAddStudentModal('${key}')">
       <button onclick="openAddStudentModal('${key}')">+ Add</button>
-      ${currentUserRole==='admin' && !isProfessionSection(key)?`<button onclick="openBulkImport('${key}')" style="background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📥 Bulk Import</button>`:''}
+      ${currentUserRole==='admin'?`<button onclick="openBulkImport('${key}')" style="background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📥 Bulk Import</button>`:''}
     </div>`;
   }
   
@@ -2455,6 +2455,12 @@ let bulkImportContext = { key: null, students: [] };
 
 function openBulkImport(key) {
   bulkImportContext = { key, students: [] };
+  const profession = isProfessionSection(key);
+  document.getElementById('bulk-import-title').textContent = profession ? '📥 Bulk Import Volunteers' : '📥 Bulk Import Students';
+  document.getElementById('bulk-columns-hint').textContent = profession
+    ? 'Columns: Name, Type (Profession/Education), Detail, Joining Date'
+    : 'Columns: Name, Class, Joining Date';
+  document.getElementById('bulk-secondary-col-header').textContent = secondaryFieldLabel(key);
   document.getElementById('bulk-import-overlay').style.display = 'flex';
   document.getElementById('bulk-preview').style.display = 'none';
   document.getElementById('bulk-confirm-btn').style.display = 'none';
@@ -2468,17 +2474,28 @@ function closeBulkImport() {
 }
 
 function downloadTemplate() {
-  // Create Excel template using XLSX
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['Name', 'Class', 'Joining Date'],
-    ['Ravi Kumar', '7', '22-06-2026'],
-    ['Priya Sharma', '8', '22-06-2026'],
-    ['Arjun Naik', '5', '22-06-2026'],
-  ]);
-  ws['!cols'] = [{wch:25},{wch:10},{wch:15}];
+  const profession = isProfessionSection(bulkImportContext.key);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Students');
-  XLSX.writeFile(wb, 'BalakaSangha_Student_Template.xlsx');
+  if(profession){
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Name', 'Type', 'Detail', 'Joining Date'],
+      ['Ramesh Rao', 'Profession', 'Software Engineer', '22-06-2026'],
+      ['Anjali Bhat', 'Education', 'B.Com 2nd Year', '22-06-2026'],
+    ]);
+    ws['!cols'] = [{wch:25},{wch:12},{wch:22},{wch:15}];
+    XLSX.utils.book_append_sheet(wb, ws, 'Volunteers');
+    XLSX.writeFile(wb, 'YuvakaSangha_Volunteer_Template.xlsx');
+  } else {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Name', 'Class', 'Joining Date'],
+      ['Ravi Kumar', '7', '22-06-2026'],
+      ['Priya Sharma', '8', '22-06-2026'],
+      ['Arjun Naik', '5', '22-06-2026'],
+    ]);
+    ws['!cols'] = [{wch:25},{wch:10},{wch:15}];
+    XLSX.utils.book_append_sheet(wb, ws, 'Students');
+    XLSX.writeFile(wb, 'BalakaSangha_Student_Template.xlsx');
+  }
 }
 
 function handleBulkFile(event) {
@@ -2486,26 +2503,34 @@ function handleBulkFile(event) {
   if (!file) return;
   document.getElementById('bulk-status').textContent = 'Reading file...';
 
+  const key = bulkImportContext.key;
+  const profession = isProfessionSection(key);
   const reader = new FileReader();
 
   reader.onload = function(e) {
     try {
       let rows = [];
 
+      const parseDate = (raw) => {
+        raw = (raw||'').toString().trim();
+        if(!raw) return fmtDate(new Date());
+        if(raw.match(/^\d{2}-\d{2}-\d{4}$/)){
+          const [d,m,y] = raw.split('-');
+          return y+'-'+m+'-'+d;
+        }
+        return raw; // already YYYY-MM-DD
+      };
+
       if (file.name.endsWith('.csv')) {
         // Parse CSV
         const text = e.target.result;
         const lines = text.split('\n').filter(l => l.trim());
-        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
         rows = lines.slice(1).map(line => {
           const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
-          const rawDate = vals[2]||'';
-          let joiningDate = rawDate;
-          if(rawDate.match(/^\d{2}-\d{2}-\d{4}$/)){
-            const [d,m,y] = rawDate.split('-');
-            joiningDate = y+'-'+m+'-'+d;
+          if(profession){
+            return { name: vals[0]||'', type: vals[1]||'', detail: vals[2]||'', joiningDate: parseDate(vals[3]) };
           }
-          return { name: vals[0]||'', class: vals[1]||'', joiningDate };
+          return { name: vals[0]||'', class: vals[1]||'', joiningDate: parseDate(vals[2]) };
         });
       } else {
         // Parse Excel
@@ -2513,47 +2538,70 @@ function handleBulkFile(event) {
         const wb = XLSX.read(data, { type: 'array', cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(ws, { raw: false });
-        rows = json.map(r => ({
-          name: (r['Name'] || r['name'] || '').toString().trim(),
-          class: (r['Class'] || r['class'] || '').toString().trim(),
-          joiningDate: (() => {
-              let raw = (r['Joining Date'] || r['joining date'] || r['JoiningDate'] || '').toString().trim();
-              if(!raw) return fmtDate(new Date());
-              // Convert DD-MM-YYYY to YYYY-MM-DD for internal storage
-              if(raw.match(/^\d{2}-\d{2}-\d{4}$/)) {
-                const [d,m,y] = raw.split('-');
-                return y+'-'+m+'-'+d;
-              }
-              return raw; // already YYYY-MM-DD
-            })()
-        }));
+        rows = json.map(r => {
+          const name = (r['Name'] || r['name'] || '').toString().trim();
+          if(profession){
+            return {
+              name,
+              type: (r['Type'] || r['type'] || '').toString().trim(),
+              detail: (r['Detail'] || r['detail'] || '').toString().trim(),
+              joiningDate: parseDate(r['Joining Date'] || r['joining date'] || r['JoiningDate'])
+            };
+          }
+          return {
+            name,
+            class: (r['Class'] || r['class'] || '').toString().trim(),
+            joiningDate: parseDate(r['Joining Date'] || r['joining date'] || r['JoiningDate'])
+          };
+        });
       }
 
       // Validate rows
-      const today = fmtDate(new Date());
       const validStudents = [];
       const previewRows = [];
       const errors = [];
 
-      rows.forEach((r, i) => {
-        const rowNum = i + 2;
-        const name = r.name;
-        const cls = r.class.replace('Class ', '').replace('class ', '').trim();
-        const clsNum = parseInt(cls);
-        const joining = r.joiningDate || today;
+      if(profession){
+        rows.forEach((r, i) => {
+          const rowNum = i + 2;
+          const name = r.name;
+          const rawType = (r.type||'').trim().toLowerCase();
+          const type = rawType==='profession' ? 'Profession' : rawType==='education' ? 'Education' : '';
+          const detail = r.detail;
+          const joining = r.joiningDate || fmtDate(new Date());
 
-        let status = '✅ Valid';
-        let valid = true;
+          let status = '✅ Valid';
+          let valid = true;
 
-        if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
-        else if (clsNum < 5 || clsNum > 10 || isNaN(clsNum)) { 
-          status = '⚠️ Class must be 5-10'; valid = false; 
-          errors.push(`Row ${rowNum}: Invalid class "${cls}"`); 
-        }
+          if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
+          else if (!type) { status = '⚠️ Type must be Profession or Education'; valid = false; errors.push(`Row ${rowNum}: Invalid type "${r.type}"`); }
+          else if (!detail) { status = '⚠️ Detail is required'; valid = false; errors.push(`Row ${rowNum}: Missing detail`); }
 
-        previewRows.push({ name, cls, joining, status, valid });
-        if (valid) validStudents.push({ name, class: String(clsNum), joiningDate: joining });
-      });
+          previewRows.push({ name, secondary: valid ? type+': '+detail : (r.type||'—'), joining, status, valid });
+          if (valid) validStudents.push({ name, profession: { type, detail }, joiningDate: joining });
+        });
+      } else {
+        const today = fmtDate(new Date());
+        rows.forEach((r, i) => {
+          const rowNum = i + 2;
+          const name = r.name;
+          const cls = r.class.replace('Class ', '').replace('class ', '').trim();
+          const clsNum = parseInt(cls);
+          const joining = r.joiningDate || today;
+
+          let status = '✅ Valid';
+          let valid = true;
+
+          if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
+          else if (clsNum < 5 || clsNum > 10 || isNaN(clsNum)) { 
+            status = '⚠️ Class must be 5-10'; valid = false; 
+            errors.push(`Row ${rowNum}: Invalid class "${cls}"`); 
+          }
+
+          previewRows.push({ name, secondary: cls ? 'Class '+cls : '—', joining, status, valid });
+          if (valid) validStudents.push({ name, class: String(clsNum), joiningDate: joining });
+        });
+      }
 
       // Show preview
       bulkImportContext.students = validStudents;
@@ -2562,7 +2610,7 @@ function handleBulkFile(event) {
         <tr style="background:${r.valid ? 'transparent' : 'var(--red-light)'}">
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text)">${i+1}</td>
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-weight:500;color:var(--text)">${r.name||'—'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${r.cls ? 'Class '+r.cls : '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${r.secondary||'—'}</td>
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${r.joining||'—'}</td>
           <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${r.status}</td>
         </tr>
