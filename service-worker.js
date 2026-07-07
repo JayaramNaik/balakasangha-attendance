@@ -1,4 +1,4 @@
-const CACHE_NAME = 'balaka-v6';
+const CACHE_NAME = 'balaka-v7';
 const BASE = '/balakasangha-attendance';
 
 const ASSETS = [

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Vivekananda Balakasangha — Attendance</title>
+<title>Vivekananda Balaka Sangha &amp; Yuvaka Sangha — Attendance</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#185FA5">
 <meta name="mobile-web-app-capable" content="yes">
@@ -94,6 +94,7 @@ button{cursor:pointer;background:var(--surface)}
 .type-tab{padding:6px 18px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;transition:all .12s}
 .type-tab[data-type="old"].active{background:var(--green-light);color:var(--green-dark);border-color:var(--green);font-weight:700}
 .type-tab[data-type="new"].active{background:var(--red-light);color:var(--red-dark);border-color:var(--red);font-weight:700}
+.type-tab[data-type="yuvaka"].active{background:#EFE6F7;color:#7B4FA6;border-color:#7B4FA6;font-weight:700}
 
 /* School sub-tabs */
 .school-tabs{display:flex;gap:5px;margin-bottom:.8rem}
@@ -281,7 +282,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
                style="height:80px;width:auto"
                onerror="this.outerHTML='<div style=\'font-size:48px;line-height:1\'>🔱</div>'">
         </div>
-        <h1 style="color:#fff;font-size:22px;margin-bottom:4px">Vivekananda Balakasangha</h1>
+        <h1 style="color:#fff;font-size:22px;margin-bottom:4px">Vivekananda Balaka Sangha &amp; Yuvaka Sangha</h1>
         <p style="font-size:13px;opacity:0.9">Attendance Management System</p>
       </div>
       <div class="login-content">
@@ -329,7 +330,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
                  style="height:54px;width:auto"
                  onerror="this.outerHTML='<div style=\'font-size:36px\'>🔱</div>'">
           </div>
-          <h1 style="color:#fff;font-size:20px;margin-bottom:4px">Vivekananda Balakasangha</h1>
+          <h1 style="color:#fff;font-size:20px;margin-bottom:4px">Vivekananda Balaka Sangha &amp; Yuvaka Sangha</h1>
           <p>Create New Account</p>
         </div>
         <div class="login-content">
@@ -376,7 +377,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <div style="display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap">
     <img src="rkmission_logo.png" alt="Ramakrishna Mission" style="height:56px;width:auto" onerror="this.style.display='none'">
     <div>
-      <h1 style="margin:0">Vivekananda Balakasangha</h1>
+      <h1 style="margin:0">Vivekananda Balaka Sangha &amp; Yuvaka Sangha</h1>
       <p class="subtitle" style="margin:4px 0 0">Attendance Management System — Sunday sessions tracker</p>
     </div>
   </div>
@@ -396,7 +397,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
   <!-- Print header (only shown when printing) -->
   <div class="print-header" id="print-header">
-    <h2 style="margin-bottom:4px">Vivekananda Balakasangha — Attendance Sheet</h2>
+    <h2 style="margin-bottom:4px">Vivekananda Balaka Sangha &amp; Yuvaka Sangha — Attendance Sheet</h2>
     <p id="print-subtitle" style="font-size:12px;color:#555;margin-bottom:8px"></p>
   </div>
 
@@ -428,8 +429,8 @@ tbody td{padding:6px 8px;vertical-align:middle}
        border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13px;color:#856404;">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
       <div>
-        🎓 <strong>Year-End Reminder:</strong> Next Sunday (1st June) all students will be 
-        automatically promoted to the next class. Class 10 students will graduate and be removed.
+        🎓 <strong>Year-End Reminder:</strong> Next Sunday (1st June) all Balaka Sangha students will be 
+        automatically promoted to the next class. Class 10 students will graduate and be removed. (Yuvaka Sangha members are not affected.)
       </div>
       <div style="display:flex;gap:8px;">
         <button onclick="runClassPromotion()" 
@@ -605,6 +606,8 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <div class="main-nav">
     <button class="main-tab active" data-view="attendance">📋 Attendance</button>
     <button class="main-tab" id="analytics-tab" data-view="analytics">📊 Analytics</button>
+    <button class="main-tab" id="corrections-tab" data-view="corrections">🔄 Corrections<span id="corrections-badge" style="display:none;background:#D85A30;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;margin-left:5px;font-weight:700"></span></button>
+    <button class="main-tab" id="auditlog-tab" data-view="auditlog">🕵️ Audit Log</button>
   </div>
 
   <!-- ATTENDANCE VIEW -->
@@ -612,6 +615,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
     <div class="type-tabs">
       <button class="type-tab active" data-type="old">🎓 Old Students</button>
       <button class="type-tab" data-type="new">🌱 New Students</button>
+      <button class="type-tab" data-type="yuvaka">🧑‍💼 Yuvaka Sangha</button>
     </div>
     <div id="old-view" class="panel visible">
       <div class="school-tabs">
@@ -629,15 +633,59 @@ tbody td{padding:6px 8px;vertical-align:middle}
       <div id="panel-new-middle" class="panel visible"></div>
       <div id="panel-new-high" class="panel"></div>
     </div>
+    <div id="yuvaka-view" class="panel">
+      <div id="panel-yuvaka-sangha" class="panel visible"></div>
+    </div>
   </div>
 
   <!-- ANALYTICS VIEW -->
   <div id="analytics-view" class="panel">
     <div id="analytics-content"></div>
   </div>
+
+  <!-- CORRECTIONS VIEW -->
+  <div id="corrections-view" class="panel">
+    <div id="corrections-content"></div>
+  </div>
+
+  <!-- AUDIT LOG VIEW -->
+  <div id="auditlog-view" class="panel">
+    <div id="auditlog-content"></div>
+  </div>
 </div>
 
-<!-- EDIT STUDENT MODAL -->
+<!-- CORRECTION REQUEST MODAL -->
+<div id="correction-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-title">🔄 Request a Correction</div>
+    <p style="font-size:12.5px;color:var(--text3);margin:0 0 12px">
+      This session is submitted and locked. Describe the correction needed — an admin will review and approve it.
+    </p>
+    <div class="modal-group">
+      <label>Student</label>
+      <div id="correction-student-name" style="font-weight:700;padding:6px 0"></div>
+    </div>
+    <div class="modal-group">
+      <label>Current status</label>
+      <div id="correction-current-value" style="padding:6px 0"></div>
+    </div>
+    <div class="modal-group">
+      <label for="correction-new-value">Requested change *</label>
+      <select id="correction-new-value">
+        <option value="P">Present</option>
+        <option value="A">Absent</option>
+      </select>
+    </div>
+    <div class="modal-group">
+      <label for="correction-reason">Reason *</label>
+      <textarea id="correction-reason" rows="3" placeholder="e.g. Marked absent by mistake, student was actually present" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border2);font-family:inherit"></textarea>
+    </div>
+    <div class="modal-buttons">
+      <button class="modal-btn modal-btn-primary" onclick="submitCorrectionRequest()">Submit Request</button>
+      <button class="modal-btn modal-btn-secondary" onclick="closeCorrectionModal()">Cancel</button>
+    </div>
+  </div>
+</div>
 <div id="edit-student-modal" class="modal">
   <div class="modal-content">
     <div class="modal-title">✏️ Edit Student Details</div>
@@ -645,7 +693,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
       <label for="edit-student-name">Student Name *</label>
       <input type="text" id="edit-student-name" placeholder="Full name">
     </div>
-    <div class="modal-group">
+    <div class="modal-group" id="edit-class-group">
       <label for="edit-student-class">Standard/Class *</label>
       <select id="edit-student-class">
         <option value="">Select Class</option>
@@ -657,17 +705,27 @@ tbody td{padding:6px 8px;vertical-align:middle}
         <option value="10">Class 10</option>
       </select>
     </div>
+    <div class="modal-group" id="edit-profession-group" style="display:none">
+      <label>Profession or Education *</label>
+      <select id="edit-student-profession-type" style="margin-bottom:8px">
+        <option value="">Select one</option>
+        <option value="Profession">Profession</option>
+        <option value="Education">Education</option>
+      </select>
+      <input type="text" id="edit-student-profession-detail" placeholder="e.g. Software Engineer / B.Com 2nd Year">
+    </div>
     <div class="modal-group">
       <label for="edit-student-joining">Date of Joining</label>
       <input type="date" id="edit-student-joining">
     </div>
     <div class="modal-group">
       <label for="edit-student-section">Move to Section</label>
-      <select id="edit-student-section">
+      <select id="edit-student-section" onchange="onEditSectionChange()">
         <option value="old-middle">Old Students — Middle School</option>
         <option value="old-high">Old Students — High School</option>
         <option value="new-middle">New Students — Middle School</option>
         <option value="new-high">New Students — High School</option>
+        <option value="yuvaka-sangha">Yuvaka Sangha</option>
       </select>
     </div>
     <div class="modal-buttons">
@@ -700,7 +758,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
       <label for="modal-student-name">Student Name *</label>
       <input type="text" id="modal-student-name" placeholder="Full name">
     </div>
-    <div class="modal-group">
+    <div class="modal-group" id="add-class-group">
       <label for="modal-student-class">Standard/Class *</label>
       <select id="modal-student-class">
         <option value="">Select Class</option>
@@ -711,6 +769,15 @@ tbody td{padding:6px 8px;vertical-align:middle}
         <option value="9">Class 9</option>
         <option value="10">Class 10</option>
       </select>
+    </div>
+    <div class="modal-group" id="add-profession-group" style="display:none">
+      <label>Profession or Education *</label>
+      <select id="modal-student-profession-type" style="margin-bottom:8px">
+        <option value="">Select one</option>
+        <option value="Profession">Profession</option>
+        <option value="Education">Education</option>
+      </select>
+      <input type="text" id="modal-student-profession-detail" placeholder="e.g. Software Engineer / B.Com 2nd Year">
     </div>
     <div class="modal-group">
       <label for="modal-student-joining">Date of Joining *</label>
@@ -746,16 +813,38 @@ const SECTIONS={
   'old-high':  {label:'Old Students — High School',  type:'old',color:'#185FA5'},
   'new-middle':{label:'New Students — Middle School',type:'new',color:'#D85A30'},
   'new-high':  {label:'New Students — High School',  type:'new',color:'#C07A00'},
+  'yuvaka-sangha':{label:'Yuvaka Sangha', type:'yuvaka', color:'#7B4FA6', fieldType:'profession'},
 };
 const SEC_KEYS=Object.keys(SECTIONS);
+// Balaka Sangha sections only (excludes Yuvaka Sangha) — used for anything that
+// should never mix the two groups together, like combined exports.
+const BALAKA_SEC_KEYS=SEC_KEYS.filter(k=>SECTIONS[k].type!=='yuvaka');
+
+// A section can define fieldType:'profession' (Yuvaka Sangha) instead of the
+// default Class field. These helpers keep every render/export site in sync.
+function isProfessionSection(key){ return (SECTIONS[key]||{}).fieldType === 'profession'; }
+function secondaryFieldLabel(key){ return isProfessionSection(key) ? 'Profession/Education' : 'Class'; }
+function secondaryFieldValue(key, student){
+  if(typeof student !== 'object' || !student) return '';
+  if(isProfessionSection(key)){
+    const p = student.profession;
+    return p && p.detail ? (p.type+': '+p.detail) : '';
+  }
+  return student.class || '';
+}
+function exportFilePrefix(key){ return isProfessionSection(key) ? 'YuvakaSangha' : 'BalakaSangha'; }
 
 // ===================== STATE =====================
-let students={'old-middle':[],'old-high':[],'new-middle':[],'new-high':[]};
+let students={'old-middle':[],'old-high':[],'new-middle':[],'new-high':[],'yuvaka-sangha':[]};
 let records={};
+// locks: key = 'sectionKey|date', value = {lockedBy, lockedByName, lockedAt}
+// Once a session is locked, marks can't be changed directly — only via a
+// correction request that an admin reviews and approves.
+let locks={};
 const now=new Date();
 let curMonth=now.getMonth(),curYear=now.getFullYear();
 let curDate=null,curView='attendance',curType='old';
-let curSchool={old:'old-middle',new:'new-middle'};
+let curSchool={old:'old-middle',new:'new-middle',yuvaka:'yuvaka-sangha'};
 const chartInstances={};
 
 // User & Auth
@@ -767,6 +856,9 @@ let currentUserName='';
 let stateDoc=null;
 let adminsDoc=null;
 let volunteersDoc=null;
+let correctionsCollection=null;
+let auditLogCollection=null;
+let allCorrections=[]; // full live list from Firestore, kept in sync via onSnapshot
 
 // Modal state
 let addStudentContext={key:null};
@@ -812,7 +904,7 @@ function setPendingSync(val){
 async function trySyncNow(){
   if(!stateDoc || !navigator.onLine) return;
   try{
-    await stateDoc.set({students, records});
+    await stateDoc.set({students, records, locks});
     setPendingSync(false);
     setSyncStatus('synced','✓ Synced to Firebase');
     showToast('✅ Offline marks synced successfully!');
@@ -864,6 +956,8 @@ async function initFirebase(){
     stateDoc = db.doc(STATE_DOC_PATH);
     adminsDoc = db.doc(ADMINS_DOC_PATH);
     volunteersDoc = db.doc(VOLUNTEERS_DOC_PATH);
+    correctionsCollection = db.collection('corrections');
+    auditLogCollection = db.collection('auditLog');
 
     // Real-time listener
     stateDoc.onSnapshot(snapshot=>{
@@ -871,6 +965,7 @@ async function initFirebase(){
         const data = snapshot.data();
         SEC_KEYS.forEach(key=>{students[key]=data.students?.[key]||[];});
         records = data.records || {};
+        locks = data.locks || {};
         setSyncStatus('synced','Synced with Firebase');
         renderCurrent();
       }
@@ -931,9 +1026,11 @@ async function loadState(){
         );
       });
       records = data.records || {};
+      locks = data.locks || {};
     } else {
       SEC_KEYS.forEach(key=>students[key]=[]);
       records={};
+      locks={};
       await saveState();
     }
     setSyncStatus('synced','Loaded shared data');
@@ -965,7 +1062,7 @@ async function saveState(){
   setSyncStatus('syncing','Saving...');
   try{
     if(stateDoc){
-      await stateDoc.set({students, records});
+      await stateDoc.set({students, records, locks});
       setPendingSync(false);
       setSyncStatus('synced','Saved to Firebase ✓');
     } else {
@@ -1012,17 +1109,21 @@ function showApp(user){
   
   // Hide analytics tab completely for volunteers
   const analyticsTab=document.getElementById('analytics-tab');
+  const auditlogTab=document.getElementById('auditlog-tab');
   if(currentUserRole==='volunteer'){
     analyticsTab.style.display='none';
-    // If somehow on analytics view, switch back to attendance
-    if(curView==='analytics'){ curView='attendance'; }
+    auditlogTab.style.display='none';
+    // If somehow on analytics/audit view, switch back to attendance
+    if(curView==='analytics'||curView==='auditlog'){ curView='attendance'; }
   } else {
     analyticsTab.style.display='';
+    auditlogTab.style.display='';
   }
   
   buildSundayBtns();
   renderCurrentSection();
   checkYearEndPromotion();
+  initCorrectionsListener();
 }
 
 function signIn(){
@@ -1133,6 +1234,8 @@ document.querySelectorAll('.main-tab').forEach(btn=>{
     btn.classList.add('active');curView=btn.dataset.view;
     document.getElementById('attendance-view').classList.toggle('visible',curView==='attendance');
     document.getElementById('analytics-view').classList.toggle('visible',curView==='analytics');
+    document.getElementById('corrections-view').classList.toggle('visible',curView==='corrections');
+    document.getElementById('auditlog-view').classList.toggle('visible',curView==='auditlog');
     renderCurrent();
   });
 });
@@ -1142,6 +1245,7 @@ document.querySelectorAll('.type-tab').forEach(btn=>{
     btn.classList.add('active');curType=btn.dataset.type;
     document.getElementById('old-view').classList.toggle('visible',curType==='old');
     document.getElementById('new-view').classList.toggle('visible',curType==='new');
+    document.getElementById('yuvaka-view').classList.toggle('visible',curType==='yuvaka');
     renderCurrentSection();
   });
 });
@@ -1161,10 +1265,13 @@ let _renderTimer=null;
 function renderCurrent(){
   clearTimeout(_renderTimer);
   _renderTimer=setTimeout(()=>{
-    if(curView==='attendance')renderCurrentSection();else renderAnalytics();
+    if(curView==='attendance')renderCurrentSection();
+    else if(curView==='analytics')renderAnalytics();
+    else if(curView==='corrections')renderCorrections();
+    else if(curView==='auditlog')renderAuditLog();
   },50); // 50ms debounce prevents flicker on rapid section switching
 }
-function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);}
+function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);renderSection(curSchool['yuvaka']);}
 
 // ===================== RECORDS =====================
 function getRecord(k,d,i){return records[k+'|'+d+'|'+i]||null;}
@@ -1213,7 +1320,21 @@ function renderSection(key){
     html+=`<button class="btn-export" onclick="exportExcel('${key}')">⬇ Export Excel</button>`;
   }
   html+=`<button class="btn-export" onclick="printAttendanceSheet()" style="background:#555">🖨 Print</button>`;
-  html+=`</div>
+  const locked = isLocked(key, curDate);
+  if(currentUserRole==='admin'){
+    html+= locked
+      ? `<button class="btn-export" onclick="toggleSessionLock('${key}')" style="background:#856404">🔓 Unlock Session</button>`
+      : `<button class="btn-export" onclick="toggleSessionLock('${key}')" style="background:#1D9E75">🔒 Submit &amp; Lock</button>`;
+  }
+  html+=`</div>`;
+  if(locked){
+    const lockInfo = locks[key+'|'+curDate] || {};
+    html+=`<div style="background:#FFF3CD;border:1.5px solid #FFC107;border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:12.5px;color:#856404">
+      🔒 <strong>This session is submitted and locked</strong>${lockInfo.lockedByName?' by '+lockInfo.lockedByName:''}. 
+      Marks can no longer be changed directly — tap ✓/✕ to raise a correction request instead.
+    </div>`;
+  }
+  html+=`
   <div class="summary-grid">
     <div class="metric"><div class="metric-label">Total</div><div class="metric-value mv-blue">${st.length}</div></div>
     <div class="metric" onclick="setFilter('${key}','P')" title="Click to filter Present" style="cursor:pointer"><div class="metric-label">Present ▾</div><div class="metric-value mv-green">${ts.present}</div></div>
@@ -1235,7 +1356,7 @@ function renderSection(key){
     html+=`<div class="add-row">
       <input type="text" id="new-${key}" placeholder="Add student name..." onkeydown="if(event.key==='Enter')openAddStudentModal('${key}')">
       <button onclick="openAddStudentModal('${key}')">+ Add</button>
-      ${currentUserRole==='admin'?`<button onclick="openBulkImport('${key}')" style="background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📥 Bulk Import</button>`:''}
+      ${currentUserRole==='admin' && !isProfessionSection(key)?`<button onclick="openBulkImport('${key}')" style="background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📥 Bulk Import</button>`:''}
     </div>`;
   }
   
@@ -1286,7 +1407,7 @@ function renderSection(key){
   html += markerSummary;
 
   html+=`<table><thead><tr>
-    <th class="col-num">#</th><th class="col-name">Name</th><th class="col-class">Class</th>
+    <th class="col-num">#</th><th class="col-name">Name</th><th class="col-class">${secondaryFieldLabel(key)}</th>
     <th class="col-check">Present</th><th class="col-check">Absent</th>
     <th class="col-sessions">Sessions</th><th class="col-streak">Streak</th>
     <th class="col-bar">This month</th>`;
@@ -1300,7 +1421,7 @@ function renderSection(key){
 
   st.forEach((student,i)=>{
     const name=typeof student==='string'?student:student.name;
-    const studentClass=typeof student==='string'?'':student.class||'';
+    const studentClass=secondaryFieldValue(key, student);
     const rec=getRecord(key,curDate,i),s=getStats(key,i);
     const sessLabel=s.total>0?`${s.present} of ${s.total}${s.pct!==null?' ('+s.pct+'%)':''}`:'—';
     const streakHtml=s.streak>0?`<span style="color:#E24B4A;font-size:11px">🔥${s.streak}</span>`:(()=>{
@@ -1313,10 +1434,10 @@ function renderSection(key){
     })();
     const barHtml=s.mTotal>0?`<div style="font-size:9px;color:var(--text3)">${s.mPresent}/${s.mTotal}</div><div class="pct-bar"><div class="pct-fill" style="width:${Math.round(s.mPresent/s.mTotal*100)}%;background:${barColor(Math.round(s.mPresent/s.mTotal*100))}"></div></div>`:'<span style="font-size:10px;color:var(--text4)">—</span>';
 
-    // At-risk: below 75% with at least 2 sessions recorded
-    const atRisk = s.total >= 2 && s.pct !== null && s.pct < 75;
+    // At-risk: below 50% with at least 2 sessions recorded
+    const atRisk = s.total >= 2 && s.pct !== null && s.pct < 50;
     const atRiskBadge = atRisk
-      ? `<span title="Attendance below 75% — at risk" style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;background:var(--red-light);color:var(--red-dark);font-weight:700;margin-left:5px;vertical-align:middle">⚠ AT RISK</span>`
+      ? `<span title="Attendance below 50% — at risk" style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;background:var(--red-light);color:var(--red-dark);font-weight:700;margin-left:5px;vertical-align:middle">⚠ AT RISK</span>`
       : '';
 
     // Consecutive absences: 2+ in a row
@@ -1373,7 +1494,12 @@ function openAddStudentModal(key){
   addStudentContext.key=key;
   document.getElementById('modal-student-name').value='';
   document.getElementById('modal-student-class').value='';
+  document.getElementById('modal-student-profession-type').value='';
+  document.getElementById('modal-student-profession-detail').value='';
   document.getElementById('modal-student-joining').value=fmtDate(new Date());
+  const profession = isProfessionSection(key);
+  document.getElementById('add-class-group').style.display = profession ? 'none' : 'block';
+  document.getElementById('add-profession-group').style.display = profession ? 'block' : 'none';
   document.getElementById('add-student-modal').classList.add('visible');
 }
 
@@ -1383,11 +1509,16 @@ function closeAddStudentModal(){
 
 async function confirmAddStudent(){
   const name=document.getElementById('modal-student-name').value.trim();
-  const studentClass=document.getElementById('modal-student-class').value;
   const joiningDate=document.getElementById('modal-student-joining').value;
-  
+  const profession = isProfessionSection(addStudentContext.key);
+
+  const studentClass = profession ? '' : document.getElementById('modal-student-class').value;
+  const professionType = profession ? document.getElementById('modal-student-profession-type').value : '';
+  const professionDetail = profession ? document.getElementById('modal-student-profession-detail').value.trim() : '';
+
   if(!name){showToast('Enter student name');return;}
-  if(!studentClass){showToast('Select class');return;}
+  if(!profession && !studentClass){showToast('Select class');return;}
+  if(profession && (!professionType || !professionDetail)){showToast('Select Profession or Education, and fill in the detail');return;}
   if(!joiningDate){showToast('Select joining date');return;}
 
   if(!addStudentContext.key) return;
@@ -1402,13 +1533,7 @@ async function confirmAddStudent(){
   });
 
   if(duplicateSection) {
-    const sectionNames = {
-      'old-middle': 'Old Students - Middle School',
-      'old-high':   'Old Students - High School',
-      'new-middle': 'New Students - Middle School',
-      'new-high':   'New Students - High School'
-    };
-    const secLabel = sectionNames[duplicateSection] || duplicateSection;
+    const secLabel = (SECTIONS[duplicateSection]||{}).label || duplicateSection;
     showToast('❌ "' + name + '" already exists in ' + secLabel + '!');
     document.getElementById('modal-student-name').focus();
     return; // BLOCK — no duplicates allowed
@@ -1416,11 +1541,10 @@ async function confirmAddStudent(){
   
   setSyncStatus('syncing','Adding student...');
   try{
-    students[addStudentContext.key].push({
-      name:name,
-      class:studentClass,
-      joiningDate:joiningDate
-    });
+    const newStudent = { name:name, joiningDate:joiningDate };
+    if(profession){ newStudent.profession = { type: professionType, detail: professionDetail }; }
+    else { newStudent.class = studentClass; }
+    students[addStudentContext.key].push(newStudent);
     // Clear ALL stale records at the new student's index across ALL dates
     // This prevents inheriting attendance from any previously deleted student
     const newIdx = students[addStudentContext.key].length - 1;
@@ -1455,6 +1579,7 @@ async function confirmAddStudent(){
     renderSection(addStudentContext.key);
     closeAddStudentModal();
     showToast(name+' added');
+    logAudit('student_added', {section:addStudentContext.key, sectionLabel:(SECTIONS[addStudentContext.key]||{}).label||addStudentContext.key, studentName:name});
   }catch(e){
     setSyncStatus('error','Failed to add student');
     showToast('Error adding student');
@@ -1462,12 +1587,19 @@ async function confirmAddStudent(){
 }
 
 async function mark(key,idx,type,el){
+  if(isLocked(key,curDate)){
+    el.checked = !el.checked; // revert the visual toggle — this session is locked
+    openCorrectionModal(key, idx, type);
+    return;
+  }
   if(el.checked){
     setRecord(key,curDate,idx,type);
     setAttendanceTracker(key,curDate,idx,currentUserName,getCurrentTime(),fmtDate(new Date()));
     const oc=type==='P'?'absent-check':'present-check';
     const ob=el.closest('tr').querySelector('.'+oc);
     if(ob)ob.checked=false;
+    const s=students[key][idx];
+    logAudit('mark', {section:key, sectionLabel:(SECTIONS[key]||{}).label||key, date:curDate, studentName: typeof s==='string'?s:s.name, newValue:type});
   } else {
     setRecord(key,curDate,idx,null);
   }
@@ -1476,6 +1608,10 @@ async function mark(key,idx,type,el){
 }
 
 async function markAll(key,type){
+  if(isLocked(key,curDate)){
+    showToast('🔒 This session is submitted and locked — use a correction request instead');
+    return;
+  }
   if(!confirm('Mark ALL '+(type==='P'?'PRESENT':'ABSENT')+'?\n\nThis will overwrite existing marks for all '+students[key].length+' students.'))return;
   students[key].forEach((_,i)=>{
     setRecord(key,curDate,i,type);
@@ -1484,6 +1620,7 @@ async function markAll(key,type){
   renderSection(key);
   await saveState();
   showToast('All marked '+(type==='P'?'present':'absent'));
+  logAudit('mark', {section:key, sectionLabel:(SECTIONS[key]||{}).label||key, date:curDate, studentName:'ALL ('+students[key].length+' students)', newValue:type});
 }
 
 // Delete modal state
@@ -1597,6 +1734,7 @@ async function confirmDeleteStudent() {
     renderSection(key);
     showToast(name + (option === 'keep' ? ' removed — records kept 📦' : ' removed — records deleted 🧹'));
     setSyncStatus('synced', 'Saved');
+    logAudit('student_deleted', {section:key, sectionLabel:(SECTIONS[key]||{}).label||key, studentName:name, detail: option==='keep'?'Records kept':'Records deleted'});
 
   } catch(e) {
     console.error('Delete error:', e);
@@ -1630,11 +1768,11 @@ function exportExcel(key){
   const sec=SECTIONS[key],st=students[key];
   const sundays=getSundays(curYear,curMonth).map(fmtDate);
   const monthLabel=MONTHS[curMonth]+' '+curYear;
-  const header=['#','Student Name','Class','Joining Date',...sundays.map(fmtShort),'Sessions Attended','Total Sessions','Attendance %','Streak'];
+  const header=['#','Student Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Sessions Attended','Total Sessions','Attendance %','Streak'];
   const rows=[header];
   st.forEach((student,i)=>{
     const name=typeof student==='string'?student:student.name;
-    const studentClass=typeof student==='string'?'':student.class||'';
+    const studentClass=secondaryFieldValue(key, student);
     const joiningDate=typeof student==='string'?'':student.joiningDate||'';
     const s=getStats(key,i);
     rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
@@ -1648,23 +1786,27 @@ function exportExcel(key){
   const ws=XLSX.utils.aoa_to_sheet(rows);
   ws['!cols']=[{wch:4},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:10})),{wch:18},{wch:14},{wch:14},{wch:8}];
   XLSX.utils.book_append_sheet(wb,ws,sec.label.slice(0,31));
-  XLSX.writeFile(wb,`Balakasangha_${key}_${monthLabel.replace(' ','_')}.xlsx`);
+  XLSX.writeFile(wb,`${exportFilePrefix(key)}_${key}_${monthLabel.replace(' ','_')}.xlsx`);
   showToast('Excel downloaded!');
 }
 
+// "Export All" bundles the four Balaka Sangha sections into one workbook.
+// Yuvaka Sangha is intentionally excluded here — it gets its own export via
+// the per-section Export button (exportExcel) so the two groups' Excel
+// sheets never get merged together.
 function exportAllExcel(){
   if(currentUserRole!=='admin'){showToast('Export is admin-only');return;}
   persistLocal();
   const wb=XLSX.utils.book_new();
   const sundays=getSundays(curYear,curMonth).map(fmtDate);
   const monthLabel=MONTHS[curMonth]+' '+curYear;
-  SEC_KEYS.forEach(key=>{
+  BALAKA_SEC_KEYS.forEach(key=>{
     const sec=SECTIONS[key],st=students[key];
-    const header=['#','Student Name','Class','Joining Date',...sundays.map(fmtShort),'Attended','Total','%','Streak'];
+    const header=['#','Student Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Attended','Total','%','Streak'];
     const rows=[header];
     st.forEach((student,i)=>{
       const name=typeof student==='string'?student:student.name;
-      const studentClass=typeof student==='string'?'':student.class||'';
+      const studentClass=secondaryFieldValue(key, student);
       const joiningDate=typeof student==='string'?'':student.joiningDate||'';
       const s=getStats(key,i);
       rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
@@ -1678,8 +1820,8 @@ function exportAllExcel(){
     ws['!cols']=[{wch:4},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:9})),{wch:9},{wch:7},{wch:7},{wch:7}];
     XLSX.utils.book_append_sheet(wb,ws,sec.label.slice(0,31));
   });
-  XLSX.writeFile(wb,`Balakasangha_All_${monthLabel.replace(' ','_')}.xlsx`);
-  showToast('All sections exported!');
+  XLSX.writeFile(wb,`BalakaSangha_All_${monthLabel.replace(' ','_')}.xlsx`);
+  showToast('All Balaka Sangha sections exported!');
 }
 
 // ===================== UTILITY: loadMonthAttendance stub =====================
@@ -1708,14 +1850,34 @@ function openEditStudentModal(key, idx) {
   if(currentUserRole !== 'admin'){ showToast('Admin only'); return; }
   const student = students[key][idx];
   const name = typeof student === 'string' ? student : student.name;
-  const cls  = typeof student === 'object' ? student.class || '' : '';
   const join = typeof student === 'object' ? student.joiningDate || '' : '';
   editStudentContext = { key, idx };
   document.getElementById('edit-student-name').value = name;
-  document.getElementById('edit-student-class').value = cls;
   document.getElementById('edit-student-joining').value = join;
   document.getElementById('edit-student-section').value = key;
+  if(isProfessionSection(key)){
+    const p = (typeof student === 'object' && student.profession) ? student.profession : {type:'',detail:''};
+    document.getElementById('edit-student-profession-type').value = p.type||'';
+    document.getElementById('edit-student-profession-detail').value = p.detail||'';
+    document.getElementById('edit-student-class').value = '';
+  } else {
+    document.getElementById('edit-student-class').value = typeof student === 'object' ? student.class || '' : '';
+    document.getElementById('edit-student-profession-type').value = '';
+    document.getElementById('edit-student-profession-detail').value = '';
+  }
+  toggleEditFieldGroup(key);
   document.getElementById('edit-student-modal').classList.add('visible');
+}
+// Shows Class or Profession/Education depending on which section is selected
+// in the "Move to Section" dropdown — matters if an admin moves a student
+// between Balaka Sangha and Yuvaka Sangha.
+function toggleEditFieldGroup(key){
+  const profession = isProfessionSection(key);
+  document.getElementById('edit-class-group').style.display = profession ? 'none' : 'block';
+  document.getElementById('edit-profession-group').style.display = profession ? 'block' : 'none';
+}
+function onEditSectionChange(){
+  toggleEditFieldGroup(document.getElementById('edit-student-section').value);
 }
 function closeEditStudentModal(){
   document.getElementById('edit-student-modal').classList.remove('visible');
@@ -1725,11 +1887,15 @@ async function confirmEditStudent(){
   const { key, idx } = editStudentContext;
   if(key === null || idx === null) return;
   const newName    = document.getElementById('edit-student-name').value.trim();
-  const newClass   = document.getElementById('edit-student-class').value;
   const newJoin    = document.getElementById('edit-student-joining').value;
   const newSection = document.getElementById('edit-student-section').value;
+  const profession = isProfessionSection(newSection);
+  const newClass        = profession ? '' : document.getElementById('edit-student-class').value;
+  const professionType   = profession ? document.getElementById('edit-student-profession-type').value : '';
+  const professionDetail = profession ? document.getElementById('edit-student-profession-detail').value.trim() : '';
   if(!newName){ showToast('Enter student name'); return; }
-  if(!newClass){ showToast('Select class'); return; }
+  if(!profession && !newClass){ showToast('Select class'); return; }
+  if(profession && (!professionType || !professionDetail)){ showToast('Select Profession or Education, and fill in the detail'); return; }
 
   // Duplicate check (exclude self)
   let dupFound = false;
@@ -1744,11 +1910,17 @@ async function confirmEditStudent(){
 
   setSyncStatus('syncing', 'Saving...');
   try{
+    const buildStudent = () => {
+      const s = { name: newName, joiningDate: newJoin };
+      if(profession) s.profession = { type: professionType, detail: professionDetail };
+      else s.class = newClass;
+      return s;
+    };
     // If section changed — move student + migrate records
     if(newSection !== key){
       students[key].splice(idx, 1);
       const newIdx = students[newSection].length;
-      students[newSection].push({ name: newName, class: newClass, joiningDate: newJoin });
+      students[newSection].push(buildStudent());
 
       // Migrate records
       const newRecords = {};
@@ -1773,13 +1945,14 @@ async function confirmEditStudent(){
       records = newRecords;
     } else {
       // Same section — just update in place
-      students[key][idx] = { name: newName, class: newClass, joiningDate: newJoin };
+      students[key][idx] = buildStudent();
     }
 
     await saveState();
     renderCurrentSection();
     closeEditStudentModal();
     showToast('✅ Student details updated!');
+    logAudit('student_edited', {section:newSection, sectionLabel:(SECTIONS[newSection]||{}).label||newSection, studentName:newName, detail: newSection!==key ? 'Moved from '+((SECTIONS[key]||{}).label||key) : ''});
   }catch(e){
     setSyncStatus('error','Save failed');
     showToast('Error: '+e.message);
@@ -1790,7 +1963,9 @@ async function confirmEditStudent(){
 function openHistoryModal(key, idx){
   const student = students[key][idx];
   const name = typeof student === 'string' ? student : student.name;
-  const cls  = typeof student === 'object' ? 'Class '+(student.class||'?') : '';
+  const cls  = isProfessionSection(key)
+    ? secondaryFieldValue(key, student)
+    : (typeof student === 'object' ? 'Class '+(student.class||'?') : '');
   const secLabel = (SECTIONS[key]||{}).label || key;
 
   // Gather all dates for this student — exact index match using split
@@ -1859,11 +2034,12 @@ function globalSearch(query){
   SEC_KEYS.forEach(key => {
     students[key].forEach((s, i) => {
       const name = typeof s === 'string' ? s : s.name;
-      const cls  = typeof s === 'object' ? s.class : '';
+      const cls  = secondaryFieldValue(key, s);
       if(name.toLowerCase().includes(q)){
         const stats = getStats(key, i);
         const pct = stats.pct !== null ? stats.pct+'%' : '—';
-        matches.push({ key, i, name, cls, pct, section: (SECTIONS[key]||{}).label||key });
+        const mark = curDate ? getRecord(key, curDate, i) : null; // 'P' | 'A' | null
+        matches.push({ key, i, name, cls, pct, mark, section: (SECTIONS[key]||{}).label||key });
       }
     });
   });
@@ -1874,19 +2050,57 @@ function globalSearch(query){
     return;
   }
 
-  resultsEl.innerHTML = matches.map(m => `
+  resultsEl.innerHTML = matches.map(m => {
+    const presentActive = m.mark === 'P';
+    const absentActive  = m.mark === 'A';
+    const statusTag = !curDate
+      ? ''
+      : m.mark === 'P' ? `<span style="font-size:10px;color:var(--green,#1D9E75);font-weight:700">✓ PRESENT</span>`
+      : m.mark === 'A' ? `<span style="font-size:10px;color:var(--red,#C0392B);font-weight:700">✗ ABSENT</span>`
+      : `<span style="font-size:10px;color:var(--text3)">NOT MARKED</span>`;
+    return `
     <div class="global-result-row" onclick="jumpToStudent('${m.key}',${m.i})">
       <span style="font-size:18px">👤</span>
       <div style="flex:1">
         <div class="global-result-name">${highlightMatch(m.name, query)}</div>
-        <div class="global-result-meta">Class ${m.cls} · ${m.section} · Attendance: ${m.pct}</div>
+        <div class="global-result-meta">${isProfessionSection(m.key) ? m.cls : 'Class '+m.cls} · ${m.section} · Attendance: ${m.pct} · ${statusTag}</div>
       </div>
       <span class="global-result-badge">${m.section.split('—')[0].trim()}</span>
+      ${curDate ? `
+      <button onclick="event.stopPropagation();quickMarkFromSearch('${m.key}',${m.i},'P','${query.replace(/'/g,"\\'")}')"
+              title="Mark present"
+              style="background:${presentActive?'#1D9E75':'var(--green-light,#E3F6EE)'};color:${presentActive?'#fff':'#1D9E75'};border:none;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;font-weight:700">✓</button>
+      <button onclick="event.stopPropagation();quickMarkFromSearch('${m.key}',${m.i},'A','${query.replace(/'/g,"\\'")}')"
+              title="Mark absent"
+              style="background:${absentActive?'#C0392B':'var(--red-light,#FBEAEA)'};color:${absentActive?'#fff':'#C0392B'};border:none;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;font-weight:700">✕</button>
+      ` : ''}
       <button onclick="event.stopPropagation();openHistoryModal('${m.key}',${m.i})" 
               style="background:var(--blue-light);border:none;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--blue-dark)">📋 History</button>
     </div>
-  `).join('');
+  `;
+  }).join('');
   resultsEl.classList.add('visible');
+}
+
+// Quick-mark attendance directly from global search results, no need to
+// navigate to the student's section tab first.
+async function quickMarkFromSearch(key, idx, type, query){
+  if(!curDate){ showToast('Select a Sunday session first'); return; }
+  if(isLocked(key, curDate)){
+    clearGlobalSearch();
+    openCorrectionModal(key, idx, type);
+    return;
+  }
+  setRecord(key, curDate, idx, type);
+  setAttendanceTracker(key, curDate, idx, currentUserName, getCurrentTime(), fmtDate(new Date()));
+  renderSection(key);
+  filterTable(key);
+  await saveState();
+  const s = students[key][idx];
+  const name = typeof s === 'string' ? s : s.name;
+  showToast(name + ' marked ' + (type === 'P' ? 'present' : 'absent'));
+  logAudit('mark', {section:key, sectionLabel:(SECTIONS[key]||{}).label||key, date:curDate, studentName:name, newValue:type, detail:'via quick-mark search'});
+  globalSearch(query); // refresh the results so the status tag/buttons update
 }
 
 function highlightMatch(name, query){
@@ -1903,22 +2117,25 @@ function clearGlobalSearch(){
 function jumpToStudent(key, idx){
   clearGlobalSearch();
   // Navigate to the right tabs
-  const type = key.startsWith('old') ? 'old' : 'new';
+  const type = (SECTIONS[key]||{}).type === 'yuvaka' ? 'yuvaka' : (key.startsWith('old') ? 'old' : 'new');
   // Switch type tab
   document.querySelectorAll('.type-tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`.type-tab[data-type="${type}"]`).classList.add('active');
   curType = type;
   document.getElementById('old-view').classList.toggle('visible', type==='old');
   document.getElementById('new-view').classList.toggle('visible', type==='new');
-  // Switch school tab
-  curSchool[type] = key;
-  const viewEl = document.getElementById(type+'-view');
-  viewEl.querySelectorAll('.school-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.key===key);
-  });
-  viewEl.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
-  const panelEl = document.getElementById('panel-'+key);
-  if(panelEl) panelEl.classList.add('visible');
+  document.getElementById('yuvaka-view').classList.toggle('visible', type==='yuvaka');
+  if(type !== 'yuvaka'){
+    // Switch school tab (Yuvaka Sangha has no middle/high sub-tabs)
+    curSchool[type] = key;
+    const viewEl = document.getElementById(type+'-view');
+    viewEl.querySelectorAll('.school-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.key===key);
+    });
+    viewEl.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
+    const panelEl = document.getElementById('panel-'+key);
+    if(panelEl) panelEl.classList.add('visible');
+  }
   // Switch main tab to attendance
   document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
   document.querySelector('.main-tab[data-view="attendance"]').classList.add('active');
@@ -1952,14 +2169,14 @@ async function exportAllMonths(){
     const sundays = getSundays(exportYear, m).map(fmtDate);
     if(!sundays.length) continue;
     const monthLabel = MONTHS[m];
-    SEC_KEYS.forEach(key => {
+    SEC_KEYS.filter(k=>!isProfessionSection(k)).forEach(key => {
       const sec = SECTIONS[key], st = students[key];
       if(!st.length) return;
-      const header = ['#','Name','Class','Joining Date',...sundays.map(d=>{ const[,mo,day]=d.split('-').map(Number); return day+' '+MONTHS[mo-1].slice(0,3); }),'Attended','Total','%','Streak'];
+      const header = ['#','Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(d=>{ const[,mo,day]=d.split('-').map(Number); return day+' '+MONTHS[mo-1].slice(0,3); }),'Attended','Total','%','Streak'];
       const rows = [header];
       st.forEach((student,i) => {
         const name = typeof student==='string'?student:student.name;
-        const cls  = typeof student==='string'?'':student.class||'';
+        const cls  = secondaryFieldValue(key, student);
         const join = typeof student==='string'?'':student.joiningDate||'';
         const s = getStats(key,i);
         rows.push([i+1,name,cls,fmtDisplay(join),...sundays.map(d=>{
@@ -1973,7 +2190,7 @@ async function exportAllMonths(){
       XLSX.utils.book_append_sheet(wb, ws, sheetName);
     });
   }
-  XLSX.writeFile(wb, `Balakasangha_FullYear_${exportYear}.xlsx`);
+  XLSX.writeFile(wb, `BalakaSangha_FullYear_${exportYear}.xlsx`);
   showToast('✅ Full year exported!');
 }
 
@@ -1999,7 +2216,7 @@ function renderAnalytics(){
   const labels=sundays.map(fmtShort),monthLabel=MONTHS[curMonth]+' '+curYear;
 
   let html=`<div class="export-bar">
-    <button class="btn-export" onclick="exportAllExcel()">⬇ This Month (All Sections)</button>
+    <button class="btn-export" onclick="exportAllExcel()">⬇ This Month (Balaka Sangha)</button>
     <button class="btn-export" onclick="exportAllMonths()" style="background:var(--green)">📅 Full Year Export</button>
     <button class="btn-export" onclick="printAttendanceSheet()" style="background:#555">🖨 Print Sheet</button>
   </div>
@@ -2034,7 +2251,7 @@ function renderAnalytics(){
   });
   html+=`</div>`;
 
-  html+=`<div class="section-block"><div class="analytics-h3">All four sections compared — ${monthLabel}</div>
+  html+=`<div class="section-block"><div class="analytics-h3">All sections compared — ${monthLabel}</div>
     <div class="chart-card">
       <div class="chart-title">Attendance % per Sunday</div>
       <div style="position:relative;height:210px"><canvas id="bar-all"></canvas></div>
@@ -2232,7 +2449,7 @@ function downloadTemplate() {
   ws['!cols'] = [{wch:25},{wch:10},{wch:15}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Students');
-  XLSX.writeFile(wb, 'Balakasangha_Student_Template.xlsx');
+  XLSX.writeFile(wb, 'BalakaSangha_Student_Template.xlsx');
 }
 
 function handleBulkFile(event) {
@@ -2386,6 +2603,246 @@ async function confirmBulkImport() {
     document.getElementById('bulk-status').textContent = '❌ Import failed: ' + e.message;
     document.getElementById('bulk-confirm-btn').disabled = false;
     setSyncStatus('error', 'Import failed');
+  }
+}
+
+// ===================== SUBMIT-LOCK, CORRECTIONS, AUDIT LOG =====================
+
+function isLocked(key, date){ return !!(key && date && locks[key+'|'+date]); }
+
+async function toggleSessionLock(key){
+  if(currentUserRole!=='admin'){ showToast('Admin only'); return; }
+  if(!curDate){ showToast('Select a Sunday session first'); return; }
+  const lockKey = key+'|'+curDate;
+  const secLabel = (SECTIONS[key]||{}).label || key;
+  if(locks[lockKey]){
+    if(!confirm('Unlock '+secLabel+' for '+fmtFull(curDate)+'?\n\nMarks can be edited directly again until re-locked.')) return;
+    delete locks[lockKey];
+    await saveState();
+    logAudit('unlock', {section:key, sectionLabel:secLabel, date:curDate});
+    showToast('🔓 Session unlocked');
+  } else {
+    if(!confirm('Submit & lock '+secLabel+' for '+fmtFull(curDate)+'?\n\nAfter this, marks can only be changed through a correction request that you review.')) return;
+    locks[lockKey] = {
+      lockedBy: currentUser?currentUser.email:'',
+      lockedByName: currentUserName||'',
+      lockedAt: new Date().toISOString()
+    };
+    await saveState();
+    logAudit('lock', {section:key, sectionLabel:secLabel, date:curDate});
+    showToast('🔒 Session submitted and locked');
+  }
+  renderSection(key);
+}
+
+// Writes one entry to the auditLog collection. Never blocks the calling
+// action if logging fails — the attendance/correction operation itself has
+// already succeeded by the time this is called.
+async function logAudit(action, details){
+  if(!auditLogCollection) return;
+  try{
+    await auditLogCollection.add(Object.assign({
+      action,
+      performedBy: currentUserName || (currentUser?currentUser.email:'unknown'),
+      performedByEmail: currentUser?currentUser.email:'',
+      performedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      performedAtLocal: new Date().toISOString()
+    }, details));
+  }catch(e){ console.warn('[Audit] failed to log', e); }
+}
+
+// Live listener for correction requests — keeps the badge count and the
+// Corrections tab in sync across all signed-in devices.
+function initCorrectionsListener(){
+  if(!correctionsCollection) return;
+  correctionsCollection.orderBy('requestedAt','desc').onSnapshot(snap=>{
+    allCorrections = snap.docs.map(d=>Object.assign({id:d.id}, d.data()));
+    const pendingCount = allCorrections.filter(c=>c.status==='pending').length;
+    const badge = document.getElementById('corrections-badge');
+    if(badge){
+      if(pendingCount>0 && currentUserRole==='admin'){ badge.textContent=pendingCount; badge.style.display='inline-block'; }
+      else { badge.style.display='none'; }
+    }
+    if(curView==='corrections') renderCorrections();
+  }, err=>console.warn('[Corrections] listener error', err));
+}
+
+let correctionContext = { key:null, idx:null, date:null };
+
+function openCorrectionModal(key, idx, requestedType){
+  if(!curDate) return;
+  correctionContext = { key, idx, date: curDate };
+  const student = students[key][idx];
+  const name = typeof student==='string' ? student : student.name;
+  const current = getRecord(key, curDate, idx);
+  const currentLabel = current==='P' ? 'Present' : current==='A' ? 'Absent' : 'Not marked';
+  document.getElementById('correction-student-name').textContent = name+' — '+((SECTIONS[key]||{}).label||key)+' · '+fmtFull(curDate);
+  document.getElementById('correction-current-value').textContent = currentLabel;
+  document.getElementById('correction-new-value').value = requestedType || (current==='P' ? 'A' : 'P');
+  document.getElementById('correction-reason').value = '';
+  document.getElementById('correction-modal').classList.add('visible');
+}
+
+function closeCorrectionModal(){
+  document.getElementById('correction-modal').classList.remove('visible');
+  correctionContext = { key:null, idx:null, date:null };
+}
+
+async function submitCorrectionRequest(){
+  const { key, idx, date } = correctionContext;
+  if(key===null || idx===null) return;
+  const newValue = document.getElementById('correction-new-value').value;
+  const reason = document.getElementById('correction-reason').value.trim();
+  if(!reason){ showToast('Please describe the reason for this correction'); return; }
+  if(!correctionsCollection){ showToast('Not connected — try again shortly'); return; }
+
+  const student = students[key][idx];
+  const name = typeof student==='string' ? student : student.name;
+  const oldValue = getRecord(key, date, idx);
+  const secLabel = (SECTIONS[key]||{}).label || key;
+
+  try{
+    await correctionsCollection.add({
+      section: key, sectionLabel: secLabel,
+      date, studentIdx: idx, studentName: name,
+      field: 'attendance',
+      oldValue: oldValue || null,
+      newValue,
+      reason,
+      status: 'pending',
+      requestedBy: currentUser?currentUser.email:'',
+      requestedByName: currentUserName||'',
+      requestedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    logAudit('correction_requested', {section:key, sectionLabel:secLabel, date, studentName:name, oldValue, newValue, reason});
+    closeCorrectionModal();
+    showToast('✅ Correction request sent to admin');
+  }catch(e){
+    showToast('Error submitting request: '+e.message);
+  }
+}
+
+function renderCorrections(){
+  const el = document.getElementById('corrections-content');
+  if(!el) return;
+  const isAdmin = currentUserRole==='admin';
+  const myEmail = currentUser?currentUser.email:'';
+  const list = isAdmin ? allCorrections : allCorrections.filter(c=>c.requestedBy===myEmail);
+
+  if(!list.length){
+    el.innerHTML = '<div class="empty-state">'+(isAdmin?'No correction requests yet.':'You haven\u2019t submitted any correction requests yet.')+'</div>';
+    return;
+  }
+
+  const fmtVal = v => v==='P' ? 'Present' : v==='A' ? 'Absent' : 'Not marked';
+
+  el.innerHTML = '<h3 style="margin:6px 0 14px">'+(isAdmin?'🔄 Correction Requests':'🔄 My Correction Requests')+'</h3>' + list.map(c=>{
+    const statusColor = c.status==='pending' ? '#856404' : c.status==='approved' ? '#1D9E75' : '#C0392B';
+    const statusBg    = c.status==='pending' ? '#FFF3CD' : c.status==='approved' ? '#E3F6EE' : '#FBEAEA';
+    return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:700">${c.studentName}</div>
+          <div style="font-size:12px;color:var(--text3)">${c.sectionLabel} · ${fmtFull(c.date)}</div>
+          <div style="font-size:12.5px;margin-top:6px">Change: <strong>${fmtVal(c.oldValue)}</strong> → <strong>${fmtVal(c.newValue)}</strong></div>
+          <div style="font-size:12.5px;color:var(--text2);margin-top:4px">"${c.reason}"</div>
+          <div style="font-size:11px;color:var(--text4);margin-top:6px">Requested by ${c.requestedByName||c.requestedBy}${c.reviewedByName?' · Reviewed by '+c.reviewedByName:''}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+          <span style="background:${statusBg};color:${statusColor};font-weight:700;font-size:11px;padding:3px 10px;border-radius:10px;white-space:nowrap">${c.status.toUpperCase()}</span>
+          ${isAdmin && c.status==='pending' ? `
+            <div style="display:flex;gap:6px">
+              <button onclick="approveCorrection('${c.id}')" style="background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">✓ Approve</button>
+              <button onclick="rejectCorrection('${c.id}')" style="background:#C0392B;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">✕ Reject</button>
+            </div>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function approveCorrection(id){
+  if(currentUserRole!=='admin') return;
+  const c = allCorrections.find(x=>x.id===id);
+  if(!c) return;
+  if(!confirm('Approve this correction for '+c.studentName+'?')) return;
+  try{
+    setRecord(c.section, c.date, c.studentIdx, c.newValue);
+    setAttendanceTracker(c.section, c.date, c.studentIdx, currentUserName, getCurrentTime(), fmtDate(new Date()));
+    await saveState();
+    await correctionsCollection.doc(id).update({
+      status: 'approved',
+      reviewedBy: currentUser?currentUser.email:'',
+      reviewedByName: currentUserName||'',
+      reviewedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    logAudit('correction_approved', {section:c.section, sectionLabel:c.sectionLabel, date:c.date, studentName:c.studentName, oldValue:c.oldValue, newValue:c.newValue, reason:c.reason});
+    renderSection(c.section);
+    showToast('✅ Correction approved and applied');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+async function rejectCorrection(id){
+  if(currentUserRole!=='admin') return;
+  const c = allCorrections.find(x=>x.id===id);
+  if(!c) return;
+  if(!confirm('Reject this correction request for '+c.studentName+'?')) return;
+  try{
+    await correctionsCollection.doc(id).update({
+      status: 'rejected',
+      reviewedBy: currentUser?currentUser.email:'',
+      reviewedByName: currentUserName||'',
+      reviewedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    logAudit('correction_rejected', {section:c.section, sectionLabel:c.sectionLabel, date:c.date, studentName:c.studentName, oldValue:c.oldValue, newValue:c.newValue, reason:c.reason});
+    showToast('Correction rejected');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+const AUDIT_ACTION_LABEL = {
+  mark: '✏️ Marked attendance',
+  lock: '🔒 Locked session',
+  unlock: '🔓 Unlocked session',
+  correction_requested: '🔄 Correction requested',
+  correction_approved: '✅ Correction approved',
+  correction_rejected: '❌ Correction rejected',
+  student_added: '➕ Student added',
+  student_edited: '✏️ Student edited',
+  student_deleted: '🗑️ Student removed'
+};
+
+async function renderAuditLog(){
+  const el = document.getElementById('auditlog-content');
+  if(!el) return;
+  if(currentUserRole!=='admin'){ el.innerHTML = '<div class="empty-state">Admin only.</div>'; return; }
+  if(!auditLogCollection){ el.innerHTML = '<div class="empty-state">Not connected.</div>'; return; }
+  el.innerHTML = '<div class="empty-state">Loading audit log...</div>';
+  try{
+    const snap = await auditLogCollection.orderBy('performedAt','desc').limit(200).get();
+    const entries = snap.docs.map(d=>d.data());
+    if(!entries.length){ el.innerHTML = '<div class="empty-state">No activity logged yet.</div>'; return; }
+    const fmtVal = v => v==='P' ? 'Present' : v==='A' ? 'Absent' : (v || '—');
+    const rows = entries.map(e=>{
+      const when = (e.performedAt && e.performedAt.toDate) ? e.performedAt.toDate().toLocaleString() : (e.performedAtLocal||'');
+      let detail = '';
+      if(e.oldValue!==undefined || e.newValue!==undefined){
+        detail = fmtVal(e.oldValue)+' → '+fmtVal(e.newValue);
+      }
+      if(e.reason) detail += (detail?' · ':'')+'"'+e.reason+'"';
+      if(e.detail) detail += (detail?' · ':'')+e.detail;
+      return `<tr>
+        <td style="font-size:11.5px;white-space:nowrap">${when}</td>
+        <td style="font-size:12px;white-space:nowrap">${AUDIT_ACTION_LABEL[e.action]||e.action}</td>
+        <td style="font-size:12px">${e.sectionLabel||e.section||''}</td>
+        <td style="font-size:12px">${e.studentName||''}</td>
+        <td style="font-size:12px">${detail}</td>
+        <td style="font-size:12px">${e.performedBy||''}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<h3 style="margin:6px 0 14px">🕵️ Audit Log <span style="font-size:12px;color:var(--text3);font-weight:400">(most recent 200 entries)</span></h3>
+      <table><thead><tr><th>When</th><th>Action</th><th>Section</th><th>Student</th><th>Detail</th><th>By</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }catch(e){
+    el.innerHTML = '<div class="empty-state">Could not load audit log: '+e.message+'</div>';
   }
 }
 
