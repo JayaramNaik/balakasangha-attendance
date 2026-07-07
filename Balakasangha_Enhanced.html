@@ -423,6 +423,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
     <span id="sync-label">Not synced</span>
   </div>
   <div id="session-info" class="session-info"></div>
+  <div id="global-lock-bar" style="display:none;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:8px 12px;margin-bottom:.8rem;flex-wrap:wrap"></div>
 
   <!-- ── Year-end upgrade reminder banner ── -->
   <div id="upgrade-banner" style="display:none;background:#FFF3CD;border:1.5px solid #FFC107;
@@ -1274,7 +1275,7 @@ function renderCurrent(){
     else if(curView==='auditlog')renderAuditLog();
   },50); // 50ms debounce prevents flicker on rapid section switching
 }
-function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);renderSection(curSchool['yuvaka']);}
+function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);renderSection(curSchool['yuvaka']);renderGlobalLockBar();}
 
 // ===================== RECORDS =====================
 function getRecord(k,d,i){return records[k+'|'+d+'|'+i]||null;}
@@ -2714,6 +2715,62 @@ async function toggleSessionLock(key){
     showToast('🔒 Session submitted and locked');
   }
   renderSection(key);
+}
+
+// Admin-only bar showing lock status across ALL sections for the currently
+// selected Sunday, with a single button to lock/unlock everything at once —
+// alongside (not instead of) the per-section lock buttons.
+function renderGlobalLockBar(){
+  const el = document.getElementById('global-lock-bar');
+  if(!el) return;
+  if(currentUserRole!=='admin' || !curDate){
+    el.style.display='none';
+    el.innerHTML='';
+    return;
+  }
+  el.style.display='flex';
+  const lockedCount = SEC_KEYS.filter(k=>isLocked(k,curDate)).length;
+  const total = SEC_KEYS.length;
+  const allLocked = lockedCount===total;
+  const noneLocked = lockedCount===0;
+  const statusText = allLocked
+    ? `🔒 All ${total} sections locked for ${fmtFull(curDate)}`
+    : noneLocked
+      ? `🔓 No sections locked yet for ${fmtFull(curDate)}`
+      : `⚠️ ${lockedCount}/${total} sections locked for ${fmtFull(curDate)}`;
+  el.innerHTML = `
+    <span style="font-size:12.5px;color:var(--text2);flex:1">${statusText}</span>
+    <button onclick="toggleAllSectionsLock()" style="background:${allLocked?'#856404':'#1D9E75'};color:#fff;border:none;border-radius:8px;padding:7px 14px;cursor:pointer;font-size:12.5px;font-weight:600;white-space:nowrap">
+      ${allLocked ? '🔓 Unlock All Sections' : '🔒 Submit & Lock All Sections'}
+    </button>`;
+}
+
+async function toggleAllSectionsLock(){
+  if(currentUserRole!=='admin'){ showToast('Admin only'); return; }
+  if(!curDate){ showToast('Select a Sunday session first'); return; }
+  const lockedCount = SEC_KEYS.filter(k=>isLocked(k,curDate)).length;
+  const allLocked = lockedCount===SEC_KEYS.length;
+
+  if(allLocked){
+    if(!confirm('Unlock ALL sections for '+fmtFull(curDate)+'?\n\nMarks can be edited directly again in every section until re-locked.')) return;
+    SEC_KEYS.forEach(k=>delete locks[k+'|'+curDate]);
+    await saveState();
+    logAudit('unlock', {section:'ALL', sectionLabel:'All sections', date:curDate});
+    showToast('🔓 All sections unlocked');
+  } else {
+    if(!confirm('Submit & lock ALL sections for '+fmtFull(curDate)+'?\n\nAfter this, marks in every section can only be changed through a correction request that you review.')) return;
+    SEC_KEYS.forEach(k=>{
+      locks[k+'|'+curDate] = {
+        lockedBy: currentUser?currentUser.email:'',
+        lockedByName: currentUserName||'',
+        lockedAt: new Date().toISOString()
+      };
+    });
+    await saveState();
+    logAudit('lock', {section:'ALL', sectionLabel:'All sections', date:curDate});
+    showToast('🔒 All sections submitted and locked');
+  }
+  renderCurrentSection();
 }
 
 // Writes one entry to the auditLog collection. Never blocks the calling
