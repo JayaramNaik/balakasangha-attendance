@@ -690,7 +690,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <div class="modal-content">
     <div class="modal-title">✏️ Edit Student Details</div>
     <div class="modal-group">
-      <label for="edit-student-name">Student Name *</label>
+      <label for="edit-student-name" id="edit-student-name-label">Student Name *</label>
       <input type="text" id="edit-student-name" placeholder="Full name">
     </div>
     <div class="modal-group" id="edit-class-group">
@@ -755,7 +755,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <div class="modal-content">
     <div class="modal-title">Add New Student</div>
     <div class="modal-group">
-      <label for="modal-student-name">Student Name *</label>
+      <label for="modal-student-name" id="modal-student-name-label">Student Name *</label>
       <input type="text" id="modal-student-name" placeholder="Full name">
     </div>
     <div class="modal-group" id="add-class-group">
@@ -824,6 +824,9 @@ const BALAKA_SEC_KEYS=SEC_KEYS.filter(k=>SECTIONS[k].type!=='yuvaka');
 // default Class field. These helpers keep every render/export site in sync.
 function isProfessionSection(key){ return (SECTIONS[key]||{}).fieldType === 'profession'; }
 function secondaryFieldLabel(key){ return isProfessionSection(key) ? 'Profession/Education' : 'Class'; }
+// Yuvaka Sangha members aren't "students" anymore — label the name field
+// accordingly wherever a section-specific label is shown.
+function nameFieldLabel(key){ return isProfessionSection(key) ? 'Volunteer Name' : 'Student Name'; }
 function secondaryFieldValue(key, student){
   if(typeof student !== 'object' || !student) return '';
   if(isProfessionSection(key)){
@@ -1321,10 +1324,12 @@ function renderSection(key){
   }
   html+=`<button class="btn-export" onclick="printAttendanceSheet()" style="background:#555">🖨 Print</button>`;
   const locked = isLocked(key, curDate);
-  if(currentUserRole==='admin'){
-    html+= locked
-      ? `<button class="btn-export" onclick="toggleSessionLock('${key}')" style="background:#856404">🔓 Unlock Session</button>`
-      : `<button class="btn-export" onclick="toggleSessionLock('${key}')" style="background:#1D9E75">🔒 Submit &amp; Lock</button>`;
+  if(locked && currentUserRole==='admin'){
+    html+=`<button class="btn-export" onclick="toggleSessionLock('${key}')" style="background:#856404">🔓 Unlock Session</button>`;
+  } else if(!locked){
+    // Both admins and volunteers can submit & lock — they're the ones
+    // actually taking attendance and know when a session is complete.
+    html+=`<button class="btn-export" onclick="toggleSessionLock('${key}')" style="background:#1D9E75">🔒 Submit &amp; Lock</button>`;
   }
   html+=`</div>`;
   if(locked){
@@ -1354,7 +1359,7 @@ function renderSection(key){
   // Add student button - only for admin
   if(currentUserRole==='admin'){
     html+=`<div class="add-row">
-      <input type="text" id="new-${key}" placeholder="Add student name..." onkeydown="if(event.key==='Enter')openAddStudentModal('${key}')">
+      <input type="text" id="new-${key}" placeholder="Add ${isProfessionSection(key)?'volunteer':'student'} name..." onkeydown="if(event.key==='Enter')openAddStudentModal('${key}')">
       <button onclick="openAddStudentModal('${key}')">+ Add</button>
       ${currentUserRole==='admin' && !isProfessionSection(key)?`<button onclick="openBulkImport('${key}')" style="background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📥 Bulk Import</button>`:''}
     </div>`;
@@ -1407,7 +1412,7 @@ function renderSection(key){
   html += markerSummary;
 
   html+=`<table><thead><tr>
-    <th class="col-num">#</th><th class="col-name">Name</th><th class="col-class">${secondaryFieldLabel(key)}</th>
+    <th class="col-num">#</th><th class="col-name">${nameFieldLabel(key)==='Volunteer Name'?'Volunteer':'Name'}</th><th class="col-class">${secondaryFieldLabel(key)}</th>
     <th class="col-check">Present</th><th class="col-check">Absent</th>
     <th class="col-sessions">Sessions</th><th class="col-streak">Streak</th>
     <th class="col-bar">This month</th>`;
@@ -1500,6 +1505,7 @@ function openAddStudentModal(key){
   const profession = isProfessionSection(key);
   document.getElementById('add-class-group').style.display = profession ? 'none' : 'block';
   document.getElementById('add-profession-group').style.display = profession ? 'block' : 'none';
+  document.getElementById('modal-student-name-label').textContent = nameFieldLabel(key)+' *';
   document.getElementById('add-student-modal').classList.add('visible');
 }
 
@@ -1598,8 +1604,6 @@ async function mark(key,idx,type,el){
     const oc=type==='P'?'absent-check':'present-check';
     const ob=el.closest('tr').querySelector('.'+oc);
     if(ob)ob.checked=false;
-    const s=students[key][idx];
-    logAudit('mark', {section:key, sectionLabel:(SECTIONS[key]||{}).label||key, date:curDate, studentName: typeof s==='string'?s:s.name, newValue:type});
   } else {
     setRecord(key,curDate,idx,null);
   }
@@ -1620,7 +1624,6 @@ async function markAll(key,type){
   renderSection(key);
   await saveState();
   showToast('All marked '+(type==='P'?'present':'absent'));
-  logAudit('mark', {section:key, sectionLabel:(SECTIONS[key]||{}).label||key, date:curDate, studentName:'ALL ('+students[key].length+' students)', newValue:type});
 }
 
 // Delete modal state
@@ -1764,45 +1767,13 @@ function filterTable(key){
 // ===================== EXPORT =====================
 function exportExcel(key){
   if(currentUserRole!=='admin'){showToast('Export is admin-only');return;}
-  persistLocal();
-  const sec=SECTIONS[key],st=students[key];
-  const sundays=getSundays(curYear,curMonth).map(fmtDate);
-  const monthLabel=MONTHS[curMonth]+' '+curYear;
-  const header=['#','Student Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Sessions Attended','Total Sessions','Attendance %','Streak'];
-  const rows=[header];
-  st.forEach((student,i)=>{
-    const name=typeof student==='string'?student:student.name;
-    const studentClass=secondaryFieldValue(key, student);
-    const joiningDate=typeof student==='string'?'':student.joiningDate||'';
-    const s=getStats(key,i);
-    rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
-      const r=records[key+'|'+d+'|'+i];
-      if(r==='P')return'P';
-      if(r==='A')return'A';
-      return '';
-    }),s.present,s.total,s.pct!==null?s.pct+'%':'—',s.streak>0?s.streak:'—']);
-  });
-  const wb=XLSX.utils.book_new();
-  const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols']=[{wch:4},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:10})),{wch:18},{wch:14},{wch:14},{wch:8}];
-  XLSX.utils.book_append_sheet(wb,ws,sec.label.slice(0,31));
-  XLSX.writeFile(wb,`${exportFilePrefix(key)}_${key}_${monthLabel.replace(' ','_')}.xlsx`);
-  showToast('Excel downloaded!');
-}
-
-// "Export All" bundles the four Balaka Sangha sections into one workbook.
-// Yuvaka Sangha is intentionally excluded here — it gets its own export via
-// the per-section Export button (exportExcel) so the two groups' Excel
-// sheets never get merged together.
-function exportAllExcel(){
-  if(currentUserRole!=='admin'){showToast('Export is admin-only');return;}
-  persistLocal();
-  const wb=XLSX.utils.book_new();
-  const sundays=getSundays(curYear,curMonth).map(fmtDate);
-  const monthLabel=MONTHS[curMonth]+' '+curYear;
-  BALAKA_SEC_KEYS.forEach(key=>{
+  try{
+    persistLocal();
     const sec=SECTIONS[key],st=students[key];
-    const header=['#','Student Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Attended','Total','%','Streak'];
+    if(!sec){ showToast('Unknown section: '+key); return; }
+    const sundays=getSundays(curYear,curMonth).map(fmtDate);
+    const monthLabel=MONTHS[curMonth]+' '+curYear;
+    const header=['#',nameFieldLabel(key),secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Sessions Attended','Total Sessions','Attendance %','Streak'];
     const rows=[header];
     st.forEach((student,i)=>{
       const name=typeof student==='string'?student:student.name;
@@ -1816,12 +1787,55 @@ function exportAllExcel(){
         return '';
       }),s.present,s.total,s.pct!==null?s.pct+'%':'—',s.streak>0?s.streak:'—']);
     });
+    const wb=XLSX.utils.book_new();
     const ws=XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols']=[{wch:4},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:9})),{wch:9},{wch:7},{wch:7},{wch:7}];
+    ws['!cols']=[{wch:4},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:10})),{wch:18},{wch:14},{wch:14},{wch:8}];
     XLSX.utils.book_append_sheet(wb,ws,sec.label.slice(0,31));
-  });
-  XLSX.writeFile(wb,`BalakaSangha_All_${monthLabel.replace(' ','_')}.xlsx`);
-  showToast('All Balaka Sangha sections exported!');
+    XLSX.writeFile(wb,`${exportFilePrefix(key)}_${key}_${monthLabel.replace(' ','_')}.xlsx`);
+    showToast('Excel downloaded!');
+  }catch(e){
+    console.error('[Export] exportExcel failed:', e);
+    showToast('❌ Export failed: '+e.message);
+  }
+}
+
+// "Export All" bundles the four Balaka Sangha sections into one workbook.
+// Yuvaka Sangha is intentionally excluded here — it gets its own export via
+// the per-section Export button (exportExcel) so the two groups' Excel
+// sheets never get merged together.
+function exportAllExcel(){
+  if(currentUserRole!=='admin'){showToast('Export is admin-only');return;}
+  try{
+    persistLocal();
+    const wb=XLSX.utils.book_new();
+    const sundays=getSundays(curYear,curMonth).map(fmtDate);
+    const monthLabel=MONTHS[curMonth]+' '+curYear;
+    BALAKA_SEC_KEYS.forEach(key=>{
+      const sec=SECTIONS[key],st=students[key];
+      const header=['#','Student Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Attended','Total','%','Streak'];
+      const rows=[header];
+      st.forEach((student,i)=>{
+        const name=typeof student==='string'?student:student.name;
+        const studentClass=secondaryFieldValue(key, student);
+        const joiningDate=typeof student==='string'?'':student.joiningDate||'';
+        const s=getStats(key,i);
+        rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
+          const r=records[key+'|'+d+'|'+i];
+          if(r==='P')return'P';
+          if(r==='A')return'A';
+          return '';
+        }),s.present,s.total,s.pct!==null?s.pct+'%':'—',s.streak>0?s.streak:'—']);
+      });
+      const ws=XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols']=[{wch:4},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:9})),{wch:9},{wch:7},{wch:7},{wch:7}];
+      XLSX.utils.book_append_sheet(wb,ws,sec.label.slice(0,31));
+    });
+    XLSX.writeFile(wb,`BalakaSangha_All_${monthLabel.replace(' ','_')}.xlsx`);
+    showToast('All Balaka Sangha sections exported!');
+  }catch(e){
+    console.error('[Export] exportAllExcel failed:', e);
+    showToast('❌ Export failed: '+e.message);
+  }
 }
 
 // ===================== UTILITY: loadMonthAttendance stub =====================
@@ -1868,13 +1882,15 @@ function openEditStudentModal(key, idx) {
   toggleEditFieldGroup(key);
   document.getElementById('edit-student-modal').classList.add('visible');
 }
-// Shows Class or Profession/Education depending on which section is selected
-// in the "Move to Section" dropdown — matters if an admin moves a student
-// between Balaka Sangha and Yuvaka Sangha.
+// Shows Class or Profession/Education (and "Student Name" vs "Volunteer
+// Name") depending on which section is selected in the "Move to Section"
+// dropdown — matters if an admin moves a student between Balaka Sangha and
+// Yuvaka Sangha.
 function toggleEditFieldGroup(key){
   const profession = isProfessionSection(key);
   document.getElementById('edit-class-group').style.display = profession ? 'none' : 'block';
   document.getElementById('edit-profession-group').style.display = profession ? 'block' : 'none';
+  document.getElementById('edit-student-name-label').textContent = nameFieldLabel(key)+' *';
 }
 function onEditSectionChange(){
   toggleEditFieldGroup(document.getElementById('edit-student-section').value);
@@ -2099,7 +2115,6 @@ async function quickMarkFromSearch(key, idx, type, query){
   const s = students[key][idx];
   const name = typeof s === 'string' ? s : s.name;
   showToast(name + ' marked ' + (type === 'P' ? 'present' : 'absent'));
-  logAudit('mark', {section:key, sectionLabel:(SECTIONS[key]||{}).label||key, date:curDate, studentName:name, newValue:type, detail:'via quick-mark search'});
   globalSearch(query); // refresh the results so the status tag/buttons update
 }
 
@@ -2161,37 +2176,51 @@ function jumpToStudent(key, idx){
 async function exportAllMonths(){
   if(currentUserRole!=='admin'){showToast('Admin only');return;}
   showToast('Building multi-month export...');
-  const wb = XLSX.utils.book_new();
-  const yearSel = document.getElementById('year-sel');
-  const exportYear = parseInt(yearSel.value);
+  try{
+    const wb = XLSX.utils.book_new();
+    const yearSel = document.getElementById('year-sel');
+    const exportYear = parseInt(yearSel.value);
 
-  for(let m=0; m<12; m++){
-    const sundays = getSundays(exportYear, m).map(fmtDate);
-    if(!sundays.length) continue;
-    const monthLabel = MONTHS[m];
-    SEC_KEYS.filter(k=>!isProfessionSection(k)).forEach(key => {
-      const sec = SECTIONS[key], st = students[key];
-      if(!st.length) return;
-      const header = ['#','Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(d=>{ const[,mo,day]=d.split('-').map(Number); return day+' '+MONTHS[mo-1].slice(0,3); }),'Attended','Total','%','Streak'];
-      const rows = [header];
-      st.forEach((student,i) => {
-        const name = typeof student==='string'?student:student.name;
-        const cls  = secondaryFieldValue(key, student);
-        const join = typeof student==='string'?'':student.joiningDate||'';
-        const s = getStats(key,i);
-        rows.push([i+1,name,cls,fmtDisplay(join),...sundays.map(d=>{
-          const r=records[key+'|'+d+'|'+i];
-          if(r==='P')return'P'; if(r==='A')return'A'; return '';
-        }),s.present,s.total,s.pct!==null?s.pct+'%':'—',s.streak>0?s.streak:'—']);
+    for(let m=0; m<12; m++){
+      const sundays = getSundays(exportYear, m).map(fmtDate);
+      if(!sundays.length) continue;
+      const monthLabel = MONTHS[m];
+      SEC_KEYS.filter(k=>!isProfessionSection(k)).forEach(key => {
+        const sec = SECTIONS[key], st = students[key];
+        if(!st.length) return;
+        const header = ['#','Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(d=>{ const[,mo,day]=d.split('-').map(Number); return day+' '+MONTHS[mo-1].slice(0,3); }),'Attended','Total','%','Streak'];
+        const rows = [header];
+        st.forEach((student,i) => {
+          const name = typeof student==='string'?student:student.name;
+          const cls  = secondaryFieldValue(key, student);
+          const join = typeof student==='string'?'':student.joiningDate||'';
+          const s = getStats(key,i);
+          rows.push([i+1,name,cls,fmtDisplay(join),...sundays.map(d=>{
+            const r=records[key+'|'+d+'|'+i];
+            if(r==='P')return'P'; if(r==='A')return'A'; return '';
+          }),s.present,s.total,s.pct!==null?s.pct+'%':'—',s.streak>0?s.streak:'—']);
+        });
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols']=[{wch:4},{wch:22},{wch:7},{wch:12},...sundays.map(()=>({wch:8})),{wch:8},{wch:7},{wch:7},{wch:7}];
+        const sheetName = (monthLabel.slice(0,3)+'-'+sec.label.slice(0,22)).slice(0,31);
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
       });
-      const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols']=[{wch:4},{wch:22},{wch:7},{wch:12},...sundays.map(()=>({wch:8})),{wch:8},{wch:7},{wch:7},{wch:7}];
-      const sheetName = (monthLabel.slice(0,3)+'-'+sec.label.slice(0,22)).slice(0,31);
-      XLSX.utils.book_append_sheet(wb, ws, sheetName);
-    });
+    }
+
+    // If every Balaka Sangha section had zero students for the whole year,
+    // the workbook would have no sheets at all — XLSX.writeFile throws on
+    // an empty workbook, which used to fail silently with no visible error.
+    if(wb.SheetNames.length === 0){
+      showToast('⚠️ Nothing to export — no students with attendance data found for '+exportYear);
+      return;
+    }
+
+    XLSX.writeFile(wb, `BalakaSangha_FullYear_${exportYear}.xlsx`);
+    showToast('✅ Full year exported!');
+  }catch(e){
+    console.error('[Export] exportAllMonths failed:', e);
+    showToast('❌ Export failed: '+e.message);
   }
-  XLSX.writeFile(wb, `BalakaSangha_FullYear_${exportYear}.xlsx`);
-  showToast('✅ Full year exported!');
 }
 
 // ===================== FEATURE 8: PRINT =====================
@@ -2611,18 +2640,22 @@ async function confirmBulkImport() {
 function isLocked(key, date){ return !!(key && date && locks[key+'|'+date]); }
 
 async function toggleSessionLock(key){
-  if(currentUserRole!=='admin'){ showToast('Admin only'); return; }
   if(!curDate){ showToast('Select a Sunday session first'); return; }
   const lockKey = key+'|'+curDate;
   const secLabel = (SECTIONS[key]||{}).label || key;
   if(locks[lockKey]){
+    // Unlocking is admin-only — a volunteer shouldn't be able to undo a
+    // submitted session once it's locked.
+    if(currentUserRole!=='admin'){ showToast('Only an admin can unlock a submitted session'); return; }
     if(!confirm('Unlock '+secLabel+' for '+fmtFull(curDate)+'?\n\nMarks can be edited directly again until re-locked.')) return;
     delete locks[lockKey];
     await saveState();
     logAudit('unlock', {section:key, sectionLabel:secLabel, date:curDate});
     showToast('🔓 Session unlocked');
   } else {
-    if(!confirm('Submit & lock '+secLabel+' for '+fmtFull(curDate)+'?\n\nAfter this, marks can only be changed through a correction request that you review.')) return;
+    // Both admins and volunteers can submit & lock a session they've
+    // finished marking.
+    if(!confirm('Submit & lock '+secLabel+' for '+fmtFull(curDate)+'?\n\nAfter this, marks can only be changed through a correction request that an admin reviews.')) return;
     locks[lockKey] = {
       lockedBy: currentUser?currentUser.email:'',
       lockedByName: currentUserName||'',
@@ -2800,7 +2833,6 @@ async function rejectCorrection(id){
 }
 
 const AUDIT_ACTION_LABEL = {
-  mark: '✏️ Marked attendance',
   lock: '🔒 Locked session',
   unlock: '🔓 Unlocked session',
   correction_requested: '🔄 Correction requested',
