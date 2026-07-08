@@ -364,12 +364,21 @@ tbody td{padding:6px 8px;vertical-align:middle}
           <button class="btn-register" onclick="showLoginMode()">Back to Sign In</button>
 
           <div class="login-footer">
-            <p>🔒 New accounts are Volunteer by default. Contact admin to request elevated access.</p>
+            <p>🔒 New accounts need admin approval before they can sign in.</p>
           </div>
         </div>
       </div>
     </div>
   </div>
+</div>
+
+<!-- PENDING APPROVAL SCREEN -->
+<div id="pending-approval-screen" style="display:none;position:fixed;inset:0;z-index:9998;align-items:center;justify-content:center;background:var(--bg,#f4f6f8);flex-direction:column;padding:20px;text-align:center">
+  <div style="font-size:48px;margin-bottom:12px">⏳</div>
+  <h2 style="margin:0 0 8px;color:var(--blue)">Awaiting Admin Approval</h2>
+  <p id="pending-approval-status" style="max-width:420px;color:var(--text2);font-size:14px;line-height:1.5;margin-bottom:6px"></p>
+  <p style="font-size:12.5px;color:var(--text3);margin-bottom:20px">Signed up as: <strong id="pending-approval-email"></strong></p>
+  <button onclick="signOutUser()" class="modal-btn modal-btn-secondary">Sign Out</button>
 </div>
 
 <!-- MAIN APP -->
@@ -609,6 +618,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
     <button class="main-tab" id="analytics-tab" data-view="analytics">📊 Analytics</button>
     <button class="main-tab" id="corrections-tab" data-view="corrections">🔄 Corrections<span id="corrections-badge" style="display:none;background:#D85A30;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;margin-left:5px;font-weight:700"></span></button>
     <button class="main-tab" id="auditlog-tab" data-view="auditlog">🕵️ Audit Log</button>
+    <button class="main-tab" id="approvals-tab" data-view="approvals">👤 Approvals<span id="approvals-badge" style="display:none;background:#D85A30;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;margin-left:5px;font-weight:700"></span></button>
   </div>
 
   <!-- ATTENDANCE VIEW -->
@@ -652,6 +662,11 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <!-- AUDIT LOG VIEW -->
   <div id="auditlog-view" class="panel">
     <div id="auditlog-content"></div>
+  </div>
+
+  <!-- APPROVALS VIEW -->
+  <div id="approvals-view" class="panel">
+    <div id="approvals-content"></div>
   </div>
 </div>
 
@@ -855,7 +870,8 @@ const chartInstances={};
 let db=null;
 let auth=null;
 let currentUser=null;
-let currentUserRole='volunteer'; // 'admin' or 'volunteer'
+let currentUserRole='volunteer'; // 'admin', 'volunteer', or 'pending' (awaiting approval)
+let currentUserStatus='approved'; // 'approved', 'pending', or 'rejected' — drives currentUserRole above
 let currentUserName='';
 let stateDoc=null;
 let adminsDoc=null;
@@ -963,24 +979,44 @@ async function initFirebase(){
     correctionsCollection = db.collection('corrections');
     auditLogCollection = db.collection('auditLog');
 
-    // Real-time listener
+    // Real-time listener — this is now the SOLE writer of students/records/locks.
+    // (Previously, a separate one-time loadState().get() also wrote to these
+    // same variables after showApp() had already rendered, with no guaranteed
+    // ordering between the two — whichever finished last silently won and
+    // could clobber a just-added student. Consolidating to one source of
+    // truth removes that race.)
     stateDoc.onSnapshot(snapshot=>{
       if(snapshot.exists){
         const data = snapshot.data();
-        SEC_KEYS.forEach(key=>{students[key]=data.students?.[key]||[];});
+        SEC_KEYS.forEach(key=>{
+          // Normalize legacy string-only student records to objects —
+          // previously only loadState() did this; onSnapshot didn't, which
+          // would have been a silent behavior gap once loadState() was removed.
+          students[key] = (data.students?.[key] || []).map(s=>
+            typeof s === 'string' ? {name:s, class:'', joiningDate:''} : s
+          );
+        });
         records = data.records || {};
         locks = data.locks || {};
         setSyncStatus('synced','Synced with Firebase');
         renderCurrent();
+      } else {
+        // First-ever run for this project — initialize the shared document.
+        SEC_KEYS.forEach(key=>students[key]=[]);
+        records={};
+        locks={};
+        saveState();
       }
-    }, err=>{ setSyncStatus('error','Firebase sync error'); });
+    }, err=>{
+      setSyncStatus('error','Firebase sync error');
+      loadFromLocalCache();
+    });
 
     auth.onAuthStateChanged(async user=>{
       currentUser = user;
       if(user){
         await loadUserRole(user);
         showApp(user);
-        try{ await loadState(); }catch(e){}
       } else {
         showLogin();
       }
@@ -991,14 +1027,48 @@ async function initFirebase(){
   }
 }
 
+// Offline fallback — used only when the real-time listener itself errors
+// out (e.g. no network). Not used during normal operation, so it can never
+// race with onSnapshot.
+function loadFromLocalCache(){
+  try{
+    const storedStudents = localStorage.getItem('balaka_students');
+    const storedRecords = localStorage.getItem('balaka_records');
+    if(storedStudents){
+      const data = JSON.parse(storedStudents);
+      SEC_KEYS.forEach(key=>{students[key]=data[key]||[];});
+    }
+    records = storedRecords ? JSON.parse(storedRecords) : {};
+    setSyncStatus('synced','Loaded local data (offline)');
+    renderCurrent();
+  }catch(e){
+    console.warn('[Offline fallback] failed to load local cache', e);
+  }
+}
+
 async function loadUserRole(user){
   try{
     const adminSnapshot = await adminsDoc.get();
     const admins = adminSnapshot.data()?.adminEmails || adminSnapshot.data()?.list || [];
     if(admins.includes(user.email)){
       currentUserRole = 'admin';
+      currentUserStatus = 'approved';
     } else {
-      currentUserRole = 'volunteer';
+      // Non-admin: check their approval status. Accounts created before this
+      // fix have no `status` field at all — we treat those as grandfathered
+      // (already-trusted, already in use) rather than suddenly locking real
+      // volunteers out. Only a NEW self-registration explicitly gets
+      // status:'pending', and only an explicit 'pending' or 'rejected'
+      // blocks access. See registerUser() for where 'pending' gets set.
+      let status = 'approved'; // default for pre-existing accounts with no status field
+      try{
+        const userDoc = await db.collection('users').doc(user.uid).get();
+        if(userDoc.exists && userDoc.data().status){
+          status = userDoc.data().status;
+        }
+      }catch(e3){ /* fall through with default 'approved' */ }
+      currentUserStatus = status;
+      currentUserRole = (status === 'pending' || status === 'rejected') ? 'pending' : 'volunteer';
     }
     // Fetch full name from users collection
     try{
@@ -1013,42 +1083,15 @@ async function loadUserRole(user){
     }
   }catch(e){
     currentUserRole = 'volunteer';
+    currentUserStatus = 'approved';
     currentUserName = user.email.split('@')[0];
   }
 }
 
-async function loadState(){
-  setSyncStatus('syncing','Loading shared data...');
-  try{
-    if(!stateDoc) throw new Error('Firebase not initialized');
-    const snapshot = await stateDoc.get();
-    if(snapshot.exists){
-      const data = snapshot.data();
-      SEC_KEYS.forEach(key=>{
-        students[key] = (data.students?.[key] || []).map(s=>
-          typeof s === 'string' ? {name:s, class:'', joiningDate:''} : s
-        );
-      });
-      records = data.records || {};
-      locks = data.locks || {};
-    } else {
-      SEC_KEYS.forEach(key=>students[key]=[]);
-      records={};
-      locks={};
-      await saveState();
-    }
-    setSyncStatus('synced','Loaded shared data');
-  }catch(e){
-    const storedStudents = localStorage.getItem('balaka_students');
-    const storedRecords = localStorage.getItem('balaka_records');
-    if(storedStudents){
-      const data = JSON.parse(storedStudents);
-      SEC_KEYS.forEach(key=>{students[key]=data[key]||[];});
-    }
-    records = storedRecords? JSON.parse(storedRecords) : {};
-    setSyncStatus('synced','Loaded local data (offline)');
-  }
-}
+// NOTE: the old one-time loadState() function has been removed — its logic
+// is now split between the onSnapshot listener (normal path) and
+// loadFromLocalCache() (offline fallback), eliminating the race between a
+// one-off .get() and the live listener. See initFirebase() above.
 
 async function saveState(){
   // ALWAYS save locally first — zero data loss guarantee
@@ -1098,12 +1141,21 @@ function showLogin(){
   document.getElementById('login-screen').style.display='block';
   document.getElementById('register-screen').style.display='none';
   document.getElementById('main-app').style.display='none';
+  const pendingScreen = document.getElementById('pending-approval-screen');
+  if(pendingScreen) pendingScreen.style.display='none';
   setSyncStatus('error','Please sign in to sync');
 }
 
 function showApp(user){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('register-screen').style.display='none';
+
+  if(currentUserRole==='pending'){
+    document.getElementById('main-app').style.display='none';
+    showPendingApprovalScreen(user);
+    return;
+  }
+  document.getElementById('pending-approval-screen').style.display='none';
   document.getElementById('main-app').style.display='block';
   
   // Update user info
@@ -1111,23 +1163,36 @@ function showApp(user){
   document.getElementById('user-role-display').textContent=(currentUserRole==='admin'?'Administrator':'Volunteer')+' — '+user.email;
   document.getElementById('user-role-icon').textContent=currentUserRole==='admin'?'👨‍💼':'🙋';
   
-  // Hide analytics tab completely for volunteers
+  // Hide analytics/audit/approvals tabs completely for volunteers
   const analyticsTab=document.getElementById('analytics-tab');
   const auditlogTab=document.getElementById('auditlog-tab');
+  const approvalsTab=document.getElementById('approvals-tab');
   if(currentUserRole==='volunteer'){
     analyticsTab.style.display='none';
     auditlogTab.style.display='none';
-    // If somehow on analytics/audit view, switch back to attendance
-    if(curView==='analytics'||curView==='auditlog'){ curView='attendance'; }
+    approvalsTab.style.display='none';
+    // If somehow on analytics/audit/approvals view, switch back to attendance
+    if(curView==='analytics'||curView==='auditlog'||curView==='approvals'){ curView='attendance'; }
   } else {
     analyticsTab.style.display='';
     auditlogTab.style.display='';
+    approvalsTab.style.display='';
+    initPendingUsersListener();
   }
   
   buildSundayBtns();
   renderCurrentSection();
   checkYearEndPromotion();
   initCorrectionsListener();
+}
+
+function showPendingApprovalScreen(user){
+  document.getElementById('pending-approval-screen').style.display='flex';
+  document.getElementById('pending-approval-email').textContent = user.email;
+  const statusLine = document.getElementById('pending-approval-status');
+  statusLine.textContent = currentUserStatus === 'rejected'
+    ? 'This account\u2019s access request was not approved. Contact an admin if you think this is a mistake.'
+    : 'Your account is waiting for an admin to approve it. You\u2019ll be able to sign in normally once approved — no need to register again.';
 }
 
 function signIn(){
@@ -1158,14 +1223,18 @@ function registerUser(){
   
   setSyncStatus('syncing','Registering...');
   auth.createUserWithEmailAndPassword(email,password).then(async (userCred)=>{
-    // Save user info
+    // Save user info. status:'pending' means this account has NO write
+    // access to attendance data until an admin approves it (see
+    // loadUserRole() and the approvals tab). Previously this doc wrote a
+    // `role` field that was never actually checked anywhere — removed.
     await db.collection('users').doc(userCred.user.uid).set({
       name:name,
       email:email,
-      role:currentUserRole,
-      createdAt:new Date()
+      status:'pending',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
-    showToast('Account created! Admin will approve shortly.');
+    await auth.signOut(); // don't leave them signed into a pending/no-access session
+    showToast('Account created — an admin needs to approve it before you can sign in.');
     showLoginMode();
   }).catch(e=>{
     setSyncStatus('error','Registration failed');
@@ -1240,6 +1309,7 @@ document.querySelectorAll('.main-tab').forEach(btn=>{
     document.getElementById('analytics-view').classList.toggle('visible',curView==='analytics');
     document.getElementById('corrections-view').classList.toggle('visible',curView==='corrections');
     document.getElementById('auditlog-view').classList.toggle('visible',curView==='auditlog');
+    document.getElementById('approvals-view').classList.toggle('visible',curView==='approvals');
     renderCurrent();
   });
 });
@@ -1273,6 +1343,7 @@ function renderCurrent(){
     else if(curView==='analytics')renderAnalytics();
     else if(curView==='corrections')renderCorrections();
     else if(curView==='auditlog')renderAuditLog();
+    else if(curView==='approvals')renderApprovals();
   },50); // 50ms debounce prevents flicker on rapid section switching
 }
 function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);renderSection(curSchool['yuvaka']);renderGlobalLockBar();}
@@ -2405,16 +2476,61 @@ Proceed?`;
   setSyncStatus('syncing', 'Promoting classes...');
 
   try {
+    // For each section, build an old-index -> new-index map for students
+    // who are kept (promoted), and archive-tag graduated students so their
+    // attendance history isn't lost — reusing the same '__arc_name' pattern
+    // that confirmDeleteStudent's "keep records" option already uses. This
+    // means if a student is ever accidentally graduated, re-adding them
+    // with the same name automatically restores their history (see the
+    // archive-restore logic in confirmAddStudent).
     SECTION_KEYS.forEach(key => {
       if(!students[key]) return;
-      students[key] = students[key]
-        .map(s => {
-          if(typeof s === 'string') return s; // legacy string student
-          const cls = parseInt(s.class);
-          if(cls === 10) return null; // will be removed
-          return { ...s, class: String(cls + 1) };
-        })
-        .filter(Boolean); // remove graduated (null) students
+      const oldList = students[key];
+      const oldToNew = {};       // oldIdx -> newIdx, for students who survive
+      const graduatedArchive = {}; // oldIdx -> archive tag, for students who graduate
+      const newList = [];
+
+      oldList.forEach((s, oldIdx) => {
+        if(typeof s === 'string'){
+          // legacy string-only student record, no class field — carried over as-is
+          oldToNew[oldIdx] = newList.length;
+          newList.push(s);
+          return;
+        }
+        const cls = parseInt(s.class);
+        if(cls === 10){
+          const safeN = (s.name||'').trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+          graduatedArchive[oldIdx] = safeN;
+          return; // removed from the roster
+        }
+        oldToNew[oldIdx] = newList.length;
+        newList.push({ ...s, class: String(cls + 1) });
+      });
+
+      // Rebuild every record for this section using the index map above —
+      // this is the fix: previously records kept their OLD index even
+      // though the roster array shifted, silently attaching history to the
+      // wrong student.
+      const rebuilt = {};
+      Object.keys(records).forEach(k => {
+        if(!k.startsWith(key + '|')) return;
+        const parts = k.split('|');
+        const idxStr = parts[2];
+        if(idxStr.startsWith('__')){ rebuilt[k] = records[k]; return; } // already-archived record, untouched
+        const oldIdx = parseInt(idxStr, 10);
+        const suffix = parts[3] ? '|'+parts[3] : '';
+        if(oldToNew[oldIdx] !== undefined){
+          rebuilt[key+'|'+parts[1]+'|'+oldToNew[oldIdx]+suffix] = records[k];
+        } else if(graduatedArchive[oldIdx] !== undefined){
+          rebuilt[key+'|'+parts[1]+'|__arc_'+graduatedArchive[oldIdx]+suffix] = records[k];
+        }
+        // else: shouldn't happen, but if oldIdx matches neither map, the
+        // record is simply dropped rather than silently misattached.
+      });
+      Object.keys(records).forEach(k => { if(k.startsWith(key+'|')) delete records[k]; });
+      Object.assign(records, rebuilt);
+
+      students[key] = newList;
     });
 
     await saveState();
@@ -2796,6 +2912,79 @@ function initCorrectionsListener(){
     }
     if(curView==='corrections') renderCorrections();
   }, err=>console.warn('[Corrections] listener error', err));
+}
+
+// ---------- §1.3/§4 fix: new-account approvals ----------
+let allPendingUsers = [];
+
+// Admin-only — keeps the Approvals badge and tab live. Only called from
+// showApp() when currentUserRole==='admin', so volunteers never run this
+// query even though the users collection itself is broadly readable.
+function initPendingUsersListener(){
+  if(!db || currentUserRole!=='admin') return;
+  db.collection('users').where('status','==','pending').onSnapshot(snap=>{
+    allPendingUsers = snap.docs.map(d=>Object.assign({id:d.id}, d.data()));
+    const badge = document.getElementById('approvals-badge');
+    if(badge){
+      if(allPendingUsers.length>0){ badge.textContent=allPendingUsers.length; badge.style.display='inline-block'; }
+      else { badge.style.display='none'; }
+    }
+    if(curView==='approvals') renderApprovals();
+  }, err=>console.warn('[Approvals] listener error', err));
+}
+
+function renderApprovals(){
+  const el = document.getElementById('approvals-content');
+  if(!el) return;
+  if(currentUserRole!=='admin'){ el.innerHTML = '<div class="empty-state">Admin only.</div>'; return; }
+  if(!allPendingUsers.length){
+    el.innerHTML = '<div class="empty-state">No pending account requests right now.</div>';
+    return;
+  }
+  el.innerHTML = '<h3 style="margin:6px 0 14px">👤 Pending Account Approvals</h3>' + allPendingUsers.map(u=>{
+    const when = (u.createdAt && u.createdAt.toDate) ? u.createdAt.toDate().toLocaleString() : '';
+    return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div>
+        <div style="font-weight:700">${u.name||'(no name)'}</div>
+        <div style="font-size:12.5px;color:var(--text2)">${u.email||''}</div>
+        ${when?`<div style="font-size:11px;color:var(--text4);margin-top:4px">Requested ${when}</div>`:''}
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="approveUserAccount('${u.id}')" style="background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">✓ Approve</button>
+        <button onclick="rejectUserAccount('${u.id}')" style="background:#C0392B;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">✕ Reject</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function approveUserAccount(uid){
+  if(currentUserRole!=='admin') return;
+  const u = allPendingUsers.find(x=>x.id===uid);
+  if(!u) return;
+  if(!confirm('Approve '+(u.name||u.email)+'? They\u2019ll get volunteer access the next time they sign in.')) return;
+  try{
+    await db.collection('users').doc(uid).update({
+      status: 'approved',
+      approvedBy: currentUser?currentUser.email:'',
+      approvedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast('✅ '+(u.name||u.email)+' approved');
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+async function rejectUserAccount(uid){
+  if(currentUserRole!=='admin') return;
+  const u = allPendingUsers.find(x=>x.id===uid);
+  if(!u) return;
+  if(!confirm('Reject '+(u.name||u.email)+'? They will not get access.')) return;
+  try{
+    await db.collection('users').doc(uid).update({
+      status: 'rejected',
+      rejectedBy: currentUser?currentUser.email:'',
+      rejectedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast('Account rejected');
+  }catch(e){ showToast('Error: '+e.message); }
 }
 
 let correctionContext = { key:null, idx:null, date:null };
