@@ -795,6 +795,13 @@ tbody td{padding:6px 8px;vertical-align:middle}
       </select>
       <input type="text" id="modal-student-profession-detail" placeholder="e.g. Software Engineer / B.Com 2nd Year">
     </div>
+    <div class="modal-group" id="add-origin-group" style="display:none">
+      <label for="modal-student-origin">Joined Yuvaka Sangha via</label>
+      <select id="modal-student-origin">
+        <option value="yuvaka">Directly (new Yuvaka Sangha member)</option>
+        <option value="balaka">Grew up through Balaka Sangha (VBS)</option>
+      </select>
+    </div>
     <div class="modal-group">
       <label for="modal-student-joining">Date of Joining *</label>
       <input type="date" id="modal-student-joining">
@@ -854,24 +861,36 @@ function secondaryFieldValue(key, student){
 function exportFilePrefix(key){ return isProfessionSection(key) ? 'YuvakaSangha' : 'BalakaSangha'; }
 
 // ===================== PERMANENT STUDENT IDs =====================
-// Format: R53VBS<3-digit year><serial>  e.g. R53VBS026047
-//   R53VBS = fixed prefix (Ramakrishna Math, VBS founded 1953, VBS itself)
-//   <year> = last 3 digits of the student's joining year, set once, never
-//            recalculated (so 2026 and 2126 don't collide the way 2-digit
-//            years would have)
-//   <serial> = a single counter that runs continuously across the whole
-//              organization's history, never resetting per year, and never
+// Format: R53VBS<3-digit year><serial>  (Balaka Sangha)
+//      or R53VYS<3-digit year><serial>  (Yuvaka Sangha)
+//   R53   = Ramakrishna Math
+//   53    = VBS founded 1953
+//   VBS/VYS = which program the person FIRST joined under
+//   <year> = last 3 digits of the joining year, set once, never recalculated
+//   <serial> = a counter that runs continuously, never resetting, never
 //              reused — this is what makes the ID permanent and unique
-// The serial must come from one shared counter so two volunteers adding
-// students on different devices at the same moment can never end up with
-// the same number — a Firestore transaction on a small counter document is
-// the standard safe way to do that atomically.
-const ID_PREFIX = 'R53VBS';
-const ID_COUNTER_DOC_PATH = 'attendance/idCounter';
+// Balaka Sangha and Yuvaka Sangha each have their OWN counter, so their
+// numbers never interleave with each other (Balaka Sangha's 5th student and
+// Yuvaka Sangha's 5th member don't collide or share a sequence).
+//
+// The ID is assigned once, at the time a person FIRST joins either program,
+// and never changes again — including if a VBS student later grows up and
+// moves into Yuvaka Sangha. Their id stays R53VBS... forever in that case,
+// by design: it's meant to show how long they've been part of the Ashram
+// overall, not just their current program. (confirmEditStudent's "move to
+// section" logic already preserves the same id across any section move —
+// nothing needed there for this.)
+const ID_PREFIXES = { balaka: 'R53VBS', yuvaka: 'R53VYS' };
+const ID_COUNTER_PATHS = { balaka: 'attendance/idCounter', yuvaka: 'attendance/idCounterYuvaka' };
 
-async function nextSerial(){
+// Which program a section belongs to, for ID-prefix/counter purposes.
+function programFor(key){
+  return key === 'yuvaka-sangha' ? 'yuvaka' : 'balaka';
+}
+
+async function nextSerial(program){
   if(!db) throw new Error('Firebase not ready');
-  const counterRef = db.doc(ID_COUNTER_DOC_PATH);
+  const counterRef = db.doc(ID_COUNTER_PATHS[program] || ID_COUNTER_PATHS.balaka);
   return await db.runTransaction(async (tx) => {
     const snap = await tx.get(counterRef);
     const current = (snap.exists && typeof snap.data().nextSerial === 'number') ? snap.data().nextSerial : 1;
@@ -889,9 +908,10 @@ function studentIdYearPart(joiningDateStr){
   return String(year % 1000).padStart(3, '0');
 }
 
-async function generateStudentId(joiningDateStr){
-  const serial = await nextSerial();
-  return ID_PREFIX + studentIdYearPart(joiningDateStr) + String(serial).padStart(3, '0');
+async function generateStudentId(joiningDateStr, program){
+  const prog = (program === 'yuvaka') ? 'yuvaka' : 'balaka';
+  const serial = await nextSerial(prog);
+  return ID_PREFIXES[prog] + studentIdYearPart(joiningDateStr) + String(serial).padStart(3, '0');
 }
 
 // Returns the permanent id for the student currently at students[key][idx].
@@ -929,12 +949,13 @@ async function migrateMissingStudentIds(){
   idMigrationInFlight = true;
   try{
     for(const key of SEC_KEYS){
+      const program = programFor(key);
       const list = students[key] || [];
       const idxToId = {};
       for(let i=0;i<list.length;i++){
         const s = list[i];
         if(!s || typeof s !== 'object') continue;
-        if(!s.id){ s.id = await generateStudentId(s.joiningDate); }
+        if(!s.id){ s.id = await generateStudentId(s.joiningDate, program); }
         idxToId[i] = s.id;
       }
       const rebuilt = {};
@@ -943,8 +964,8 @@ async function migrateMissingStudentIds(){
         const parts = k.split('|');
         const idxStr = parts[2];
         // Already an archive tag, or already an id-shaped key (starts with
-        // the fixed prefix) — leave it exactly as it is.
-        if(idxStr.startsWith('__') || idxStr.startsWith(ID_PREFIX)){
+        // either program's fixed prefix) — leave it exactly as it is.
+        if(idxStr.startsWith('__') || idxStr.startsWith(ID_PREFIXES.balaka) || idxStr.startsWith(ID_PREFIXES.yuvaka)){
           rebuilt[k] = records[k];
           return;
         }
@@ -1710,9 +1731,13 @@ function openAddStudentModal(key){
   document.getElementById('modal-student-profession-type').value='';
   document.getElementById('modal-student-profession-detail').value='';
   document.getElementById('modal-student-joining').value=fmtDate(new Date());
+  document.getElementById('modal-student-origin').value='yuvaka';
   const profession = isProfessionSection(key);
   document.getElementById('add-class-group').style.display = profession ? 'none' : 'block';
   document.getElementById('add-profession-group').style.display = profession ? 'block' : 'none';
+  // "Joined via" only makes sense for Yuvaka Sangha — a VBS-side add is
+  // always, by definition, a fresh VBS join.
+  document.getElementById('add-origin-group').style.display = (key === 'yuvaka-sangha') ? 'block' : 'none';
   document.getElementById('modal-student-name-label').textContent = nameFieldLabel(key)+' *';
   document.getElementById('add-student-modal').classList.add('visible');
 }
@@ -1729,6 +1754,12 @@ async function confirmAddStudent(){
   const studentClass = profession ? '' : document.getElementById('modal-student-class').value;
   const professionType = profession ? document.getElementById('modal-student-profession-type').value : '';
   const professionDetail = profession ? document.getElementById('modal-student-profession-detail').value.trim() : '';
+  // Only meaningful for Yuvaka Sangha: did this person grow up through VBS,
+  // or are they a direct/new Yuvaka Sangha member? Determines which ID
+  // prefix/counter they draw from — see programFor() and generateStudentId().
+  const originOverride = (addStudentContext.key === 'yuvaka-sangha')
+    ? document.getElementById('modal-student-origin').value
+    : null;
 
   if(!name){showToast('Enter student name');return;}
   if(!profession && !studentClass){showToast('Select class');return;}
@@ -1783,7 +1814,7 @@ async function confirmAddStudent(){
       }
     }
 
-    const newStudent = { name:name, joiningDate:joiningDate, id: restoredId || await generateStudentId(joiningDate) };
+    const newStudent = { name:name, joiningDate:joiningDate, id: restoredId || await generateStudentId(joiningDate, originOverride || programFor(skey)) };
     if(profession){ newStudent.profession = { type: professionType, detail: professionDetail }; }
     else { newStudent.class = studentClass; }
     students[skey].push(newStudent);
@@ -2869,7 +2900,7 @@ async function confirmBulkImport() {
     // student's leftover records just by landing at the same array index —
     // each one gets its own brand-new id below.
     for(const s of newStudents){
-      s.id = await generateStudentId(s.joiningDate);
+      s.id = await generateStudentId(s.joiningDate, programFor(key));
       students[key].push(s);
     }
 
