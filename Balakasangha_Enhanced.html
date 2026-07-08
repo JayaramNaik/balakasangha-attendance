@@ -1660,7 +1660,7 @@ function renderSection(key){
 
     html+=`<tr data-name="${name.toLowerCase()}" data-rec="${rec||'U'}">
       <td class="col-num" style="color:var(--text4)">${i+1}</td>
-      <td class="col-name"><span style="font-weight:600">${name}</span>${atRiskBadge}${consAbsBadge}</td>
+      <td class="col-name"><span style="font-weight:600">${name}</span>${atRiskBadge}${consAbsBadge}<br><span style="font-size:9.5px;color:var(--text4);letter-spacing:.3px">${idFor(key,i)}</span></td>
       <td class="col-class" style="font-size:11px;color:var(--text2)">${studentClass}</td>
       <td class="col-check"><input type="checkbox" class="present-check" ${rec==='P'?'checked':''} onchange="mark('${key}',${i},'P',this)"></td>
       <td class="col-check"><input type="checkbox" class="absent-check" ${rec==='A'?'checked':''} onchange="mark('${key}',${i},'A',this)"></td>
@@ -1962,14 +1962,14 @@ function exportExcel(key){
     if(!sec){ showToast('Unknown section: '+key); return; }
     const sundays=getSundays(curYear,curMonth).map(fmtDate);
     const monthLabel=MONTHS[curMonth]+' '+curYear;
-    const header=['#',nameFieldLabel(key),secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Sessions Attended','Total Sessions','Attendance %','Streak'];
+    const header=['#','Student ID',nameFieldLabel(key),secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Sessions Attended','Total Sessions','Attendance %','Streak'];
     const rows=[header];
     st.forEach((student,i)=>{
       const name=typeof student==='string'?student:student.name;
       const studentClass=secondaryFieldValue(key, student);
       const joiningDate=typeof student==='string'?'':student.joiningDate||'';
       const s=getStats(key,i);
-      rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
+      rows.push([i+1,idFor(key,i),name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
         const r=getRecord(key,d,i);
         if(r==='P')return'P';
         if(r==='A')return'A';
@@ -1978,7 +1978,7 @@ function exportExcel(key){
     });
     const wb=XLSX.utils.book_new();
     const ws=XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols']=[{wch:4},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:10})),{wch:18},{wch:14},{wch:14},{wch:8}];
+    ws['!cols']=[{wch:4},{wch:14},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:10})),{wch:18},{wch:14},{wch:14},{wch:8}];
     XLSX.utils.book_append_sheet(wb,ws,sec.label.slice(0,31));
     XLSX.writeFile(wb,`${exportFilePrefix(key)}_${key}_${monthLabel.replace(' ','_')}.xlsx`);
     showToast('Excel downloaded!');
@@ -2001,14 +2001,14 @@ function exportAllExcel(){
     const monthLabel=MONTHS[curMonth]+' '+curYear;
     BALAKA_SEC_KEYS.forEach(key=>{
       const sec=SECTIONS[key],st=students[key];
-      const header=['#','Student Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Attended','Total','%','Streak'];
+      const header=['#','Student ID','Student Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(fmtShort),'Attended','Total','%','Streak'];
       const rows=[header];
       st.forEach((student,i)=>{
         const name=typeof student==='string'?student:student.name;
         const studentClass=secondaryFieldValue(key, student);
         const joiningDate=typeof student==='string'?'':student.joiningDate||'';
         const s=getStats(key,i);
-        rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
+        rows.push([i+1,idFor(key,i),name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
           const r=getRecord(key,d,i);
           if(r==='P')return'P';
           if(r==='A')return'A';
@@ -2016,7 +2016,7 @@ function exportAllExcel(){
         }),s.present,s.total,s.pct!==null?s.pct+'%':'—',s.streak>0?s.streak:'—']);
       });
       const ws=XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols']=[{wch:4},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:9})),{wch:9},{wch:7},{wch:7},{wch:7}];
+      ws['!cols']=[{wch:4},{wch:14},{wch:24},{wch:10},{wch:14},...sundays.map(()=>({wch:9})),{wch:9},{wch:7},{wch:7},{wch:7}];
       XLSX.utils.book_append_sheet(wb,ws,sec.label.slice(0,31));
     });
     XLSX.writeFile(wb,`BalakaSangha_All_${monthLabel.replace(' ','_')}.xlsx`);
@@ -2178,7 +2178,7 @@ function openHistoryModal(key, idx){
   const pct     = total ? Math.round(present/total*100) : 0;
 
   document.getElementById('history-title').textContent = name;
-  document.getElementById('history-subtitle').textContent = cls + ' · ' + secLabel;
+  document.getElementById('history-subtitle').textContent = cls + ' · ' + secLabel + ' · ' + id;
 
   const pctColor = pct>=75?'var(--green)':pct>=50?'var(--amber)':'var(--red)';
   document.getElementById('history-stats').innerHTML = `
@@ -2366,20 +2366,20 @@ async function exportAllMonths(){
       SEC_KEYS.filter(k=>!isProfessionSection(k)).forEach(key => {
         const sec = SECTIONS[key], st = students[key];
         if(!st.length) return;
-        const header = ['#','Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(d=>{ const[,mo,day]=d.split('-').map(Number); return day+' '+MONTHS[mo-1].slice(0,3); }),'Attended','Total','%','Streak'];
+        const header = ['#','Student ID','Name',secondaryFieldLabel(key),'Joining Date',...sundays.map(d=>{ const[,mo,day]=d.split('-').map(Number); return day+' '+MONTHS[mo-1].slice(0,3); }),'Attended','Total','%','Streak'];
         const rows = [header];
         st.forEach((student,i) => {
           const name = typeof student==='string'?student:student.name;
           const cls  = secondaryFieldValue(key, student);
           const join = typeof student==='string'?'':student.joiningDate||'';
           const s = getStats(key,i);
-          rows.push([i+1,name,cls,fmtDisplay(join),...sundays.map(d=>{
+          rows.push([i+1,idFor(key,i),name,cls,fmtDisplay(join),...sundays.map(d=>{
             const r=getRecord(key,d,i);
             if(r==='P')return'P'; if(r==='A')return'A'; return '';
           }),s.present,s.total,s.pct!==null?s.pct+'%':'—',s.streak>0?s.streak:'—']);
         });
         const ws = XLSX.utils.aoa_to_sheet(rows);
-        ws['!cols']=[{wch:4},{wch:22},{wch:7},{wch:12},...sundays.map(()=>({wch:8})),{wch:8},{wch:7},{wch:7},{wch:7}];
+        ws['!cols']=[{wch:4},{wch:14},{wch:22},{wch:7},{wch:12},...sundays.map(()=>({wch:8})),{wch:8},{wch:7},{wch:7},{wch:7}];
         const sheetName = (monthLabel.slice(0,3)+'-'+sec.label.slice(0,22)).slice(0,31);
         XLSX.utils.book_append_sheet(wb, ws, sheetName);
       });
