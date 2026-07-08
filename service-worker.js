@@ -1,5 +1,14 @@
-const CACHE_NAME = 'balaka-v7';
-const BASE = '/balakasangha-attendance';
+const CACHE_NAME = 'balaka-v8';
+
+// Derive BASE from the service worker's own location instead of hardcoding
+// '/balakasangha-attendance'. Previously, if this file were ever served from
+// a different path (different repo name, custom domain root, a subpath
+// change), every entry in ASSETS would 404 during install; each failure was
+// individually swallowed by .catch(), so you'd get a silently incomplete
+// offline cache with no visible error. Deriving BASE from
+// self.registration.scope means this works wherever the file is actually
+// deployed, with no manual path to keep in sync.
+const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, '');
 
 const ASSETS = [
   BASE + '/',
@@ -9,6 +18,23 @@ const ASSETS = [
   BASE + '/swamiji.jpg',
   BASE + '/rkmission_logo.png'
 ];
+
+// Max time to wait for the network before falling back to cache on a
+// navigation request. Previously there was no timeout at all, so on a slow
+// or flaky connection (very plausible on mobile data during a live Sunday
+// session) the fetch could hang indefinitely instead of falling back
+// quickly.
+const NETWORK_TIMEOUT_MS = 4000;
+
+function fetchWithTimeout(req, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('network timeout')), timeoutMs);
+    fetch(req).then(
+      res => { clearTimeout(timer); resolve(res); },
+      err => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -47,10 +73,10 @@ self.addEventListener('fetch', event => {
   const acceptHeader = req.headers.get('accept') || '';
   const isNavigation = req.mode === 'navigate' || acceptHeader.includes('text/html');
 
-  // For HTML pages: always try network first, fall back to cache
+  // For HTML pages: try network first (bounded by a timeout), fall back to cache
   if (isNavigation) {
     event.respondWith(
-      fetch(req).then(res => {
+      fetchWithTimeout(req, NETWORK_TIMEOUT_MS).then(res => {
         const copy = res.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(req, copy));
         return res;

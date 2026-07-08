@@ -853,13 +853,138 @@ function secondaryFieldValue(key, student){
 }
 function exportFilePrefix(key){ return isProfessionSection(key) ? 'YuvakaSangha' : 'BalakaSangha'; }
 
-// ===================== STATE =====================
+// ===================== PERMANENT STUDENT IDs =====================
+// Format: R53VBS<3-digit year><serial>  e.g. R53VBS026047
+//   R53VBS = fixed prefix (Ramakrishna Math, VBS founded 1953, VBS itself)
+//   <year> = last 3 digits of the student's joining year, set once, never
+//            recalculated (so 2026 and 2126 don't collide the way 2-digit
+//            years would have)
+//   <serial> = a single counter that runs continuously across the whole
+//              organization's history, never resetting per year, and never
+//              reused — this is what makes the ID permanent and unique
+// The serial must come from one shared counter so two volunteers adding
+// students on different devices at the same moment can never end up with
+// the same number — a Firestore transaction on a small counter document is
+// the standard safe way to do that atomically.
+const ID_PREFIX = 'R53VBS';
+const ID_COUNTER_DOC_PATH = 'attendance/idCounter';
+
+async function nextSerial(){
+  if(!db) throw new Error('Firebase not ready');
+  const counterRef = db.doc(ID_COUNTER_DOC_PATH);
+  return await db.runTransaction(async (tx) => {
+    const snap = await tx.get(counterRef);
+    const current = (snap.exists && typeof snap.data().nextSerial === 'number') ? snap.data().nextSerial : 1;
+    tx.set(counterRef, { nextSerial: current + 1 }, { merge: true });
+    return current;
+  });
+}
+
+function studentIdYearPart(joiningDateStr){
+  let year = new Date().getFullYear();
+  if(joiningDateStr){
+    const y = parseInt(String(joiningDateStr).slice(0,4), 10);
+    if(!isNaN(y) && y > 1900 && y < 3000) year = y;
+  }
+  return String(year % 1000).padStart(3, '0');
+}
+
+async function generateStudentId(joiningDateStr){
+  const serial = await nextSerial();
+  return ID_PREFIX + studentIdYearPart(joiningDateStr) + String(serial).padStart(3, '0');
+}
+
+// Returns the permanent id for the student currently at students[key][idx].
+// Falls back to the plain array index (as a string) if that student somehow
+// hasn't been assigned an id yet — this matches the OLD key format exactly,
+// so during the brief window before migrateMissingStudentIds() finishes,
+// record lookups still find their existing index-keyed data rather than
+// coming up empty.
+function idFor(key, idx){
+  const s = students[key] && students[key][idx];
+  if(s && typeof s === 'object' && s.id) return s.id;
+  return String(idx);
+}
+
+// One-time migration: assigns a permanent id to any existing student who
+// doesn't have one yet, AND rewrites that section's existing records from
+// the old index-based keys to the new id-based keys in the same pass (a
+// student's id only ever gets assigned once, but the records that were
+// already keyed by their old array position need to move to the new key
+// alongside it, or they'd become invisible the moment id-based lookups
+// take over). Runs once per admin login where anything is still missing an
+// id; harmless if it runs more than once since it always checks for a
+// pre-existing id before assigning a new one.
+let idMigrationInFlight = false;
+async function migrateMissingStudentIds(){
+  if(currentUserRole !== 'admin') return;
+  if(idMigrationInFlight) return;
+
+  let anyMissing = false;
+  SEC_KEYS.forEach(key=>{
+    (students[key]||[]).forEach(s=>{ if(s && typeof s === 'object' && !s.id) anyMissing = true; });
+  });
+  if(!anyMissing) return;
+
+  idMigrationInFlight = true;
+  try{
+    for(const key of SEC_KEYS){
+      const list = students[key] || [];
+      const idxToId = {};
+      for(let i=0;i<list.length;i++){
+        const s = list[i];
+        if(!s || typeof s !== 'object') continue;
+        if(!s.id){ s.id = await generateStudentId(s.joiningDate); }
+        idxToId[i] = s.id;
+      }
+      const rebuilt = {};
+      Object.keys(records).forEach(k=>{
+        if(!k.startsWith(key + '|')) return; // untouched, still present in `records` afterward
+        const parts = k.split('|');
+        const idxStr = parts[2];
+        // Already an archive tag, or already an id-shaped key (starts with
+        // the fixed prefix) — leave it exactly as it is.
+        if(idxStr.startsWith('__') || idxStr.startsWith(ID_PREFIX)){
+          rebuilt[k] = records[k];
+          return;
+        }
+        const oldIdx = parseInt(idxStr, 10);
+        const suffix = parts[3] ? '|'+parts[3] : '';
+        if(!isNaN(oldIdx) && idxToId[oldIdx] !== undefined){
+          rebuilt[key+'|'+parts[1]+'|'+idxToId[oldIdx]+suffix] = records[k];
+        } else {
+          // Unrecognized shape for this section — keep as-is rather than
+          // silently dropping data we don't understand.
+          rebuilt[k] = records[k];
+        }
+      });
+      Object.keys(records).forEach(k=>{ if(k.startsWith(key+'|')) delete records[k]; });
+      Object.assign(records, rebuilt);
+    }
+    await saveState();
+    console.log('[ID migration] complete');
+  }catch(e){
+    console.warn('[ID migration] failed', e);
+  }finally{
+    idMigrationInFlight = false;
+  }
+}
+
+
 let students={'old-middle':[],'old-high':[],'new-middle':[],'new-high':[],'yuvaka-sangha':[]};
 let records={};
 // locks: key = 'sectionKey|date', value = {lockedBy, lockedByName, lockedAt}
 // Once a session is locked, marks can't be changed directly — only via a
 // correction request that an admin reviews and approves.
 let locks={};
+// archivedStudents: students who left ("removed & keep records") or
+// graduated, kept as an explicit registry {id, name, section, class,
+// profession, joiningDate, archivedAt, reason} so that if the same person
+// rejoins later, the app can look them up and reconnect their *exact*
+// original permanent ID — rather than guessing from a sanitized version of
+// their name, which is what the old scheme did and which could occasionally
+// misattribute history if a different person later shared that same name.
+let archivedStudents=[];
 const now=new Date();
 let curMonth=now.getMonth(),curYear=now.getFullYear();
 let curDate=null,curView='attendance',curType='old';
@@ -998,6 +1123,7 @@ async function initFirebase(){
         });
         records = data.records || {};
         locks = data.locks || {};
+        archivedStudents = data.archivedStudents || [];
         setSyncStatus('synced','Synced with Firebase');
         renderCurrent();
       } else {
@@ -1005,6 +1131,7 @@ async function initFirebase(){
         SEC_KEYS.forEach(key=>students[key]=[]);
         records={};
         locks={};
+        archivedStudents=[];
         saveState();
       }
     }, err=>{
@@ -1109,7 +1236,7 @@ async function saveState(){
   setSyncStatus('syncing','Saving...');
   try{
     if(stateDoc){
-      await stateDoc.set({students, records, locks});
+      await stateDoc.set({students, records, locks, archivedStudents});
       setPendingSync(false);
       setSyncStatus('synced','Saved to Firebase ✓');
     } else {
@@ -1183,6 +1310,7 @@ function showApp(user){
   buildSundayBtns();
   renderCurrentSection();
   checkYearEndPromotion();
+  migrateMissingStudentIds();
   initCorrectionsListener();
 }
 
@@ -1349,26 +1477,34 @@ function renderCurrent(){
 function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);renderSection(curSchool['yuvaka']);renderGlobalLockBar();}
 
 // ===================== RECORDS =====================
-function getRecord(k,d,i){return records[k+'|'+d+'|'+i]||null;}
-function setRecord(k,d,i,v){if(v===null)delete records[k+'|'+d+'|'+i];else records[k+'|'+d+'|'+i]=v;}
+// Records are keyed by the student's permanent ID (via idFor), not their
+// array position — this is what makes promotion, deletion, and section
+// moves safe: a student's history stays attached to THEM regardless of
+// where they end up sitting in the roster array afterward.
+function getRecord(k,d,i){const id=idFor(k,i);return records[k+'|'+d+'|'+id]||null;}
+function setRecord(k,d,i,v){const id=idFor(k,i);const rk=k+'|'+d+'|'+id;if(v===null)delete records[rk];else records[rk]=v;}
 
 // Track who marked attendance
-function getAttendanceTracker(k,d,i){const key=k+'|'+d+'|'+i+'|tracker';return records[key] || {name:'',time:'',date:''};}
-function setAttendanceTracker(k,d,i,name,time,date){const key=k+'|'+d+'|'+i+'|tracker';records[key]={name,time,date};}
+function getAttendanceTracker(k,d,i){const id=idFor(k,i);const key=k+'|'+d+'|'+id+'|tracker';return records[key] || {name:'',time:'',date:''};}
+function setAttendanceTracker(k,d,i,name,time,date){const id=idFor(k,i);const key=k+'|'+d+'|'+id+'|tracker';records[key]={name,time,date};}
 
 function getStats(key,idx){
-  const keys=Object.keys(records).filter(k=>k.startsWith(key+'|')&&k.endsWith('|'+idx)&&!k.endsWith('|tracker'));
+  const id=idFor(key,idx);
+  const keys=Object.keys(records).filter(k=>{
+    const parts=k.split('|');
+    return parts.length===3 && parts[0]===key && parts[2]===id;
+  });
   const dates=[...new Set(keys.map(k=>k.split('|')[1]))].sort();
-  const total=dates.length,present=dates.filter(d=>records[key+'|'+d+'|'+idx]==='P').length;
+  const total=dates.length,present=dates.filter(d=>records[key+'|'+d+'|'+id]==='P').length;
   const pct=total?Math.round(present/total*100):null;
-  let streak=0;for(const d of [...dates].reverse()){if(records[key+'|'+d+'|'+idx]==='P')streak++;else break;}
+  let streak=0;for(const d of [...dates].reverse()){if(records[key+'|'+d+'|'+id]==='P')streak++;else break;}
   const mSundays=getSundays(curYear,curMonth).map(fmtDate);
-  const mTotal=mSundays.filter(d=>records[key+'|'+d+'|'+idx]).length;
-  const mPresent=mSundays.filter(d=>records[key+'|'+d+'|'+idx]==='P').length;
+  const mTotal=mSundays.filter(d=>records[key+'|'+d+'|'+id]).length;
+  const mPresent=mSundays.filter(d=>records[key+'|'+d+'|'+id]==='P').length;
   // Consecutive absences (from most recent session backwards)
   let consAbsent=0;
   for(const d of [...dates].reverse()){
-    if(records[key+'|'+d+'|'+idx]==='A') consAbsent++;
+    if(records[key+'|'+d+'|'+id]==='A') consAbsent++;
     else break;
   }
   return{present,total,pct,streak,mPresent,mTotal,consAbsent};
@@ -1619,44 +1755,47 @@ async function confirmAddStudent(){
   
   setSyncStatus('syncing','Adding student...');
   try{
-    const newStudent = { name:name, joiningDate:joiningDate };
+    const skey = addStudentContext.key;
+
+    // Check the archived-students registry for a departed person with this
+    // exact name — this replaces the old scheme of scanning records for a
+    // sanitized-name tag. The registry stores real names, sections, and
+    // dates, so the confirmation the person sees is concrete and specific,
+    // and restoring means reusing that exact original permanent ID rather
+    // than re-deriving a guess from the name string.
+    const matchIdx = archivedStudents.findIndex(a =>
+      (a.name||'').trim().toLowerCase() === name.toLowerCase()
+    );
+    let restoredId = null;
+    if(matchIdx !== -1){
+      const match = archivedStudents[matchIdx];
+      const whenLabel = match.archivedAt ? fmtDisplay(match.archivedAt) : 'previously';
+      const secLabel = (SECTIONS[match.section]||{}).label || match.section;
+      const proceedRestore = confirm(
+        'Found a previous student record for "' + name + '"\n' +
+        '(' + (match.reason==='graduated' ? 'graduated from' : 'left') + ' ' + secLabel + ' on ' + whenLabel + ').\n\n' +
+        'If this is the same person rejoining, click OK to restore their attendance history.\n' +
+        'If this is a different person who just happens to share this name, click Cancel to start with a clean record.'
+      );
+      if(proceedRestore){
+        restoredId = match.id;
+        archivedStudents.splice(matchIdx, 1); // no longer "departed" — active again
+      }
+    }
+
+    const newStudent = { name:name, joiningDate:joiningDate, id: restoredId || await generateStudentId(joiningDate) };
     if(profession){ newStudent.profession = { type: professionType, detail: professionDetail }; }
     else { newStudent.class = studentClass; }
-    students[addStudentContext.key].push(newStudent);
-    // Clear ALL stale records at the new student's index across ALL dates
-    // This prevents inheriting attendance from any previously deleted student
-    const newIdx = students[addStudentContext.key].length - 1;
-    const skey = addStudentContext.key;
-    // Clear any stale records at new index
-    Object.keys(records).forEach(k => {
-      const parts = k.split('|');
-      if(parts[0] === skey && parseInt(parts[2]) === newIdx) delete records[k];
-    });
+    students[skey].push(newStudent);
 
-    // Restore archived records if this student was previously removed with "keep"
-    const safeN = name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
-    const arcTag = '__arc_' + safeN;
-    const archiveKeys = Object.keys(records).filter(k =>
-      k.startsWith(skey + '|') && k.includes(arcTag)
-    );
-
-    if(archiveKeys.length > 0){
-      archiveKeys.forEach(k => {
-        // k = section|date|__arc_name|extra  OR  section|date|__arc_name
-        const parts = k.split('|');
-        const date  = parts[1];
-        const extra = parts[3] ? '|' + parts[3] : '';
-        const restored = skey + '|' + date + '|' + newIdx + extra;
-        records[restored] = records[k];
-        delete records[k];
-      });
-      showToast('✅ Previous attendance restored for ' + name + '!');
+    if(restoredId){
+      showToast('✅ ' + name + ' added — previous attendance history restored!');
     }
 
     await saveState();
-    renderSection(addStudentContext.key);
+    renderSection(skey);
     closeAddStudentModal();
-    showToast(name+' added');
+    if(!restoredId) showToast(name+' added');
   }catch(e){
     setSyncStatus('error','Failed to add student');
     showToast('Error adding student');
@@ -1754,56 +1893,36 @@ async function confirmDeleteStudent() {
   setSyncStatus('syncing', 'Removing...');
 
   try {
-    // Step 1: Remove student from array
+    const removedStudent = students[key][idx];
+    const removedId = idFor(key, idx);
+
+    // Step 1: Remove student from the roster array.
     students[key].splice(idx, 1);
 
-    // Step 2: Build new records object
-    const newRecords = {};
-    const safeN = name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
+    // Step 2: Records are keyed by this student's permanent ID, not their
+    // array position, so no other student's records are ever touched here
+    // — nothing to shift, nothing to renumber.
+    if(option === 'delete') {
+      Object.keys(records).forEach(k => {
+        const parts = k.split('|');
+        if(parts[0] === key && parts[2] === removedId) delete records[k];
+      });
+    } else {
+      // 'keep' — the id-keyed records stay exactly where they are. Register
+      // this student as archived so a later re-add of the same person can
+      // find and reconnect to this exact ID (see confirmAddStudent).
+      archivedStudents.push({
+        id: removedId,
+        name: name,
+        section: key,
+        class: (removedStudent && typeof removedStudent === 'object' ? removedStudent.class : '') || '',
+        profession: (removedStudent && typeof removedStudent === 'object' ? removedStudent.profession : null) || null,
+        joiningDate: (removedStudent && typeof removedStudent === 'object' ? removedStudent.joiningDate : '') || '',
+        archivedAt: fmtDate(new Date()),
+        reason: 'removed'
+      });
+    }
 
-    Object.keys(records).forEach(k => {
-      // Keep records from other sections unchanged
-      if(!k.startsWith(key + '|')) {
-        newRecords[k] = records[k];
-        return;
-      }
-
-      // Parse key: section|date|index|optional
-      const parts = k.split('|');
-      const section = parts[0];
-      const date    = parts[1];
-      const idxStr  = parts[2];
-      const extra   = parts[3] || '';
-      const i       = parseInt(idxStr, 10);
-
-      // Skip archived keys (already processed)
-      if(idxStr.startsWith('__')) {
-        newRecords[k] = records[k];
-        return;
-      }
-
-      const suffix = extra ? '|' + extra : '';
-
-      if(i < idx) {
-        // Below deleted index — keep unchanged
-        newRecords[k] = records[k];
-
-      } else if(i === idx) {
-        if(option === 'keep') {
-          // Archive under student name
-          const archiveKey = section + '|' + date + '|__arc_' + safeN + suffix;
-          newRecords[archiveKey] = records[k];
-        }
-        // If delete: just don't copy (drop it)
-
-      } else {
-        // Above deleted index — shift down by 1
-        const newKey = section + '|' + date + '|' + (i - 1) + suffix;
-        newRecords[newKey] = records[k];
-      }
-    });
-
-    records = newRecords;
     await saveState();
     renderSection(key);
     showToast(name + (option === 'keep' ? ' removed — records kept 📦' : ' removed — records deleted 🧹'));
@@ -1851,7 +1970,7 @@ function exportExcel(key){
       const joiningDate=typeof student==='string'?'':student.joiningDate||'';
       const s=getStats(key,i);
       rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
-        const r=records[key+'|'+d+'|'+i];
+        const r=getRecord(key,d,i);
         if(r==='P')return'P';
         if(r==='A')return'A';
         return '';
@@ -1890,7 +2009,7 @@ function exportAllExcel(){
         const joiningDate=typeof student==='string'?'':student.joiningDate||'';
         const s=getStats(key,i);
         rows.push([i+1,name,studentClass,fmtDisplay(joiningDate),...sundays.map(d=>{
-          const r=records[key+'|'+d+'|'+i];
+          const r=getRecord(key,d,i);
           if(r==='P')return'P';
           if(r==='A')return'A';
           return '';
@@ -1996,41 +2115,30 @@ async function confirmEditStudent(){
 
   setSyncStatus('syncing', 'Saving...');
   try{
+    const movedId = idFor(key, idx); // this student's permanent id, preserved across any edit or section move
     const buildStudent = () => {
-      const s = { name: newName, joiningDate: newJoin };
+      const s = { name: newName, joiningDate: newJoin, id: movedId };
       if(profession) s.profession = { type: professionType, detail: professionDetail };
       else s.class = newClass;
       return s;
     };
-    // If section changed — move student + migrate records
+    // If section changed — move student, then re-key just THEIR records to
+    // the new section prefix. Records are keyed by permanent id, so no
+    // other student in either section is affected by this move at all.
     if(newSection !== key){
       students[key].splice(idx, 1);
-      const newIdx = students[newSection].length;
       students[newSection].push(buildStudent());
 
-      // Migrate records
-      const newRecords = {};
       Object.keys(records).forEach(k => {
-        if(!k.startsWith(key + '|')){
-          newRecords[k] = records[k];
-          return;
-        }
         const parts = k.split('|');
-        const date = parts[1], idxStr = parts[2], extra = parts[3]||'';
-        const i = parseInt(idxStr, 10);
-        if(isNaN(i)){ newRecords[k] = records[k]; return; }
-        const suffix = extra ? '|'+extra : '';
-        if(i < idx){ newRecords[k] = records[k]; }
-        else if(i === idx){
-          // Move to new section
-          newRecords[newSection+'|'+date+'|'+newIdx+suffix] = records[k];
-        } else {
-          newRecords[key+'|'+date+'|'+(i-1)+suffix] = records[k];
+        if(parts[0] === key && parts[2] === movedId){
+          const rest = parts.slice(1).join('|');
+          records[newSection + '|' + rest] = records[k];
+          delete records[k];
         }
       });
-      records = newRecords;
     } else {
-      // Same section — just update in place
+      // Same section — just update in place, same id
       students[key][idx] = buildStudent();
     }
 
@@ -2052,19 +2160,20 @@ function openHistoryModal(key, idx){
     ? secondaryFieldValue(key, student)
     : (typeof student === 'object' ? 'Class '+(student.class||'?') : '');
   const secLabel = (SECTIONS[key]||{}).label || key;
+  const id = idFor(key, idx);
 
-  // Gather all dates for this student — exact index match using split
+  // Gather all dates for this student — exact match on their permanent id
   const allDates = [...new Set(
     Object.keys(records)
       .filter(k => {
         const parts = k.split('|');
-        return parts[0] === key && parts[2] === String(idx) && parts.length === 3;
+        return parts[0] === key && parts[2] === id && parts.length === 3;
       })
       .map(k => k.split('|')[1])
   )].sort().reverse();
 
-  const present = allDates.filter(d => records[key+'|'+d+'|'+idx]==='P').length;
-  const absent  = allDates.filter(d => records[key+'|'+d+'|'+idx]==='A').length;
+  const present = allDates.filter(d => getRecord(key,d,idx)==='P').length;
+  const absent  = allDates.filter(d => getRecord(key,d,idx)==='A').length;
   const total   = allDates.length;
   const pct     = total ? Math.round(present/total*100) : 0;
 
@@ -2080,7 +2189,7 @@ function openHistoryModal(key, idx){
   `;
 
   let rows = allDates.map(d => {
-    const rec = records[key+'|'+d+'|'+idx];
+    const rec = getRecord(key, d, idx);
     const tracker = getAttendanceTracker(key, d, idx);
     const status = rec==='P'
       ? `<span class="pill pill-green">✓ Present</span>`
@@ -2265,7 +2374,7 @@ async function exportAllMonths(){
           const join = typeof student==='string'?'':student.joiningDate||'';
           const s = getStats(key,i);
           rows.push([i+1,name,cls,fmtDisplay(join),...sundays.map(d=>{
-            const r=records[key+'|'+d+'|'+i];
+            const r=getRecord(key,d,i);
             if(r==='P')return'P'; if(r==='A')return'A'; return '';
           }),s.present,s.total,s.pct!==null?s.pct+'%':'—',s.streak>0?s.streak:'—']);
         });
@@ -2369,7 +2478,7 @@ function renderAnalytics(){
 
   SEC_KEYS.forEach(key=>{
     const sec=SECTIONS[key],st=students[key];
-    const data=sundays.map(d=>{const p=st.filter((_,i)=>records[key+'|'+d+'|'+i]==='P').length;return st.length?Math.round(p/st.length*100):0;});
+    const data=sundays.map(d=>{const p=st.filter((_,i)=>getRecord(key,d,i)==='P').length;return st.length?Math.round(p/st.length*100):0;});
     destroyChart('bar-'+key);
     const el=document.getElementById('bar-'+key);
     if(el)chartInstances['bar-'+key]=new Chart(el,{type:'bar',data:{labels,datasets:[{label:'%',data,backgroundColor:sec.color,borderRadius:3}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,.05)'}},x:{ticks:{font:{size:10},autoSkip:false}}},plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.parsed.y+'%'}}}}});
@@ -2378,7 +2487,7 @@ function renderAnalytics(){
   destroyChart('bar-all');
   const oEl=document.getElementById('bar-all');
   if(oEl){
-    const datasets=SEC_KEYS.map(key=>({label:SECTIONS[key].label,data:sundays.map(d=>{const st=students[key];const p=st.filter((_,i)=>records[key+'|'+d+'|'+i]==='P').length;return st.length?Math.round(p/st.length*100):0;}),backgroundColor:SECTIONS[key].color,borderRadius:2}));
+    const datasets=SEC_KEYS.map(key=>({label:SECTIONS[key].label,data:sundays.map(d=>{const st=students[key];const p=st.filter((_,i)=>getRecord(key,d,i)==='P').length;return st.length?Math.round(p/st.length*100):0;}),backgroundColor:SECTIONS[key].color,borderRadius:2}));
     chartInstances['bar-all']=new Chart(oEl,{type:'bar',data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,.05)'}},x:{ticks:{font:{size:10},autoSkip:false}}},plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.parsed.y+'%'}}}}});
   }
 }
@@ -2413,7 +2522,6 @@ function checkYearEndPromotion() {
   if(currentUserRole !== 'admin') return;
 
   const today = new Date();
-  const year = today.getMonth() >= 5 ? today.getFullYear() : today.getFullYear();
   const lastMaySunday = getLastSundayOfMay(today.getFullYear());
   const firstJuneSunday = getFirstSundayOfJune(today.getFullYear());
   const todayStr = fmtDateOnly(today);
@@ -2431,8 +2539,13 @@ function checkYearEndPromotion() {
     document.getElementById('upgrade-banner').style.display = 'block';
   }
 
-  // Auto-promote on first Sunday of June
-  if(todayStr === firstJuneStr) {
+  // Auto-promote on/after the first Sunday of June. Previously this only
+  // matched the exact date (todayStr === firstJuneStr) — if no admin opened
+  // the app on that specific Sunday, promotion silently never ran that year
+  // until someone noticed and triggered it manually. Using >= with the
+  // alreadyDone/doneKey guard above means any admin login on or after that
+  // date catches it up, exactly once, without needing that one exact day.
+  if(today >= firstJuneSunday) {
     runClassPromotion(true); // true = auto (no confirm dialog)
   }
 }
@@ -2452,7 +2565,12 @@ async function runClassPromotion(auto = false) {
     students[key].forEach(s => {
       const studentClass = typeof s === 'object' ? parseInt(s.class) : 0;
       if(studentClass === 10) {
-        graduated.push({ name: typeof s === 'object' ? s.name : s, section: key });
+        graduated.push({
+          name: typeof s === 'object' ? s.name : s,
+          section: key,
+          id: typeof s === 'object' ? s.id : null,
+          joiningDate: typeof s === 'object' ? s.joiningDate : ''
+        });
       }
     });
   });
@@ -2476,61 +2594,34 @@ Proceed?`;
   setSyncStatus('syncing', 'Promoting classes...');
 
   try {
-    // For each section, build an old-index -> new-index map for students
-    // who are kept (promoted), and archive-tag graduated students so their
-    // attendance history isn't lost — reusing the same '__arc_name' pattern
-    // that confirmDeleteStudent's "keep records" option already uses. This
-    // means if a student is ever accidentally graduated, re-adding them
-    // with the same name automatically restores their history (see the
-    // archive-restore logic in confirmAddStudent).
+    // Records are keyed by each student's permanent id, not their array
+    // position, so promoting or graduating students never requires
+    // rebuilding anyone's attendance history — a survivor's records stay
+    // attached to them automatically no matter how the roster array
+    // shifts underneath them.
     SECTION_KEYS.forEach(key => {
       if(!students[key]) return;
-      const oldList = students[key];
-      const oldToNew = {};       // oldIdx -> newIdx, for students who survive
-      const graduatedArchive = {}; // oldIdx -> archive tag, for students who graduate
-      const newList = [];
+      students[key] = students[key]
+        .map(s => {
+          if(typeof s !== 'object') return s; // legacy string-only entry, carried over as-is
+          const cls = parseInt(s.class);
+          if(cls === 10) return null; // graduates — removed below
+          return { ...s, class: String(cls + 1) };
+        })
+        .filter(Boolean);
+    });
 
-      oldList.forEach((s, oldIdx) => {
-        if(typeof s === 'string'){
-          // legacy string-only student record, no class field — carried over as-is
-          oldToNew[oldIdx] = newList.length;
-          newList.push(s);
-          return;
-        }
-        const cls = parseInt(s.class);
-        if(cls === 10){
-          const safeN = (s.name||'').trim().toLowerCase().replace(/[^a-z0-9]/g, '_');
-          graduatedArchive[oldIdx] = safeN;
-          return; // removed from the roster
-        }
-        oldToNew[oldIdx] = newList.length;
-        newList.push({ ...s, class: String(cls + 1) });
+    // Register graduates in the same archived-students list that "removed
+    // & keep records" uses, so if a promotion turns out to have been a
+    // mistake, re-adding that name restores their exact original id and
+    // history rather than starting fresh.
+    graduated.forEach(g => {
+      if(!g.id) return; // no id to register (shouldn't normally happen post-migration)
+      archivedStudents.push({
+        id: g.id, name: g.name, section: g.section, class: '10',
+        profession: null, joiningDate: g.joiningDate || '',
+        archivedAt: fmtDate(new Date()), reason: 'graduated'
       });
-
-      // Rebuild every record for this section using the index map above —
-      // this is the fix: previously records kept their OLD index even
-      // though the roster array shifted, silently attaching history to the
-      // wrong student.
-      const rebuilt = {};
-      Object.keys(records).forEach(k => {
-        if(!k.startsWith(key + '|')) return;
-        const parts = k.split('|');
-        const idxStr = parts[2];
-        if(idxStr.startsWith('__')){ rebuilt[k] = records[k]; return; } // already-archived record, untouched
-        const oldIdx = parseInt(idxStr, 10);
-        const suffix = parts[3] ? '|'+parts[3] : '';
-        if(oldToNew[oldIdx] !== undefined){
-          rebuilt[key+'|'+parts[1]+'|'+oldToNew[oldIdx]+suffix] = records[k];
-        } else if(graduatedArchive[oldIdx] !== undefined){
-          rebuilt[key+'|'+parts[1]+'|__arc_'+graduatedArchive[oldIdx]+suffix] = records[k];
-        }
-        // else: shouldn't happen, but if oldIdx matches neither map, the
-        // record is simply dropped rather than silently misattached.
-      });
-      Object.keys(records).forEach(k => { if(k.startsWith(key+'|')) delete records[k]; });
-      Object.assign(records, rebuilt);
-
-      students[key] = newList;
     });
 
     await saveState();
@@ -2773,15 +2864,14 @@ async function confirmBulkImport() {
   setSyncStatus('syncing', 'Bulk importing...');
 
   try {
-    newStudents.forEach(s => {
-      const newIdx = students[key].length;
-      // Clear ALL stale records at this index across all dates
-      Object.keys(records).filter(k => {
-        const parts = k.split('|');
-        return parts[0] === key && parseInt(parts[2]) === newIdx;
-      }).forEach(k => delete records[k]);
+    // Records are now keyed by permanent id, not array position, so a
+    // freshly-imported student can never inherit another (removed)
+    // student's leftover records just by landing at the same array index —
+    // each one gets its own brand-new id below.
+    for(const s of newStudents){
+      s.id = await generateStudentId(s.joiningDate);
       students[key].push(s);
-    });
+    }
 
     await saveState();
     renderSection(key);
@@ -3024,7 +3114,7 @@ async function submitCorrectionRequest(){
   try{
     await correctionsCollection.add({
       section: key, sectionLabel: secLabel,
-      date, studentIdx: idx, studentName: name,
+      date, studentIdx: idx, studentId: idFor(key, idx), studentName: name,
       field: 'attendance',
       oldValue: oldValue || null,
       newValue,
@@ -3085,10 +3175,34 @@ async function approveCorrection(id){
   if(currentUserRole!=='admin') return;
   const c = allCorrections.find(x=>x.id===id);
   if(!c) return;
+
+  // Find where this student currently sits in the roster. Prefer the
+  // permanent id (present on corrections submitted after the ID system
+  // existed) — it's exact regardless of whether the roster has since been
+  // reordered, promoted, or the student's name edited. Older pending
+  // corrections filed before this existed fall back to the previous
+  // name-at-index check.
+  let liveIdx = null;
+  if(c.studentId){
+    liveIdx = (students[c.section]||[]).findIndex(s => typeof s==='object' && s.id === c.studentId);
+    if(liveIdx === -1){
+      showToast('⚠️ ' + c.studentName + ' is no longer on the ' + (c.sectionLabel||c.section) + ' roster (removed or promoted since this request) — cannot safely apply. Please ask them to resubmit if needed.');
+      return;
+    }
+  } else {
+    const rosterAtIdx = (students[c.section] || [])[c.studentIdx];
+    const nameAtIdx = rosterAtIdx ? (typeof rosterAtIdx === 'object' ? rosterAtIdx.name : rosterAtIdx) : null;
+    if(!rosterAtIdx || nameAtIdx !== c.studentName){
+      showToast('⚠️ Roster has changed since this request was submitted — cannot safely apply to ' + c.studentName + '. Please ask them to resubmit.');
+      return;
+    }
+    liveIdx = c.studentIdx;
+  }
+
   if(!confirm('Approve this correction for '+c.studentName+'?')) return;
   try{
-    setRecord(c.section, c.date, c.studentIdx, c.newValue);
-    setAttendanceTracker(c.section, c.date, c.studentIdx, currentUserName, getCurrentTime(), fmtDate(new Date()));
+    setRecord(c.section, c.date, liveIdx, c.newValue);
+    setAttendanceTracker(c.section, c.date, liveIdx, currentUserName, getCurrentTime(), fmtDate(new Date()));
     await saveState();
     await correctionsCollection.doc(id).update({
       status: 'approved',
