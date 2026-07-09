@@ -457,6 +457,29 @@ tbody td{padding:6px 8px;vertical-align:middle}
     </div>
   </div>
 
+  <!-- ── attendance/state size warning (admin-only, low urgency) ── -->
+  <!-- Now that attendance records live in their own subcollection, this
+       document only holds students + locks + archivedStudents — this grows
+       far slower than records did, but student rosters and the archived
+       registry do still accumulate over many years, so a cheap check is
+       still worth having rather than assuming "fixed by the migration" and
+       never looking again. -->
+  <div id="doc-size-banner" style="display:none;background:#FFF8E1;border:1.5px solid #FFC107;
+       border-radius:10px;padding:12px 16px;margin:10px 0;font-size:13px;color:#6B5300;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div>
+        ℹ️ <strong>Storage size note:</strong> <span id="doc-size-banner-text"></span>
+        This is the roster/lock document (attendance records live separately now), so this is a
+        low-urgency heads-up, not an emergency — but worth knowing about well ahead of time.
+      </div>
+      <button onclick="document.getElementById('doc-size-banner').style.display='none'"
+              style="background:#ccc;color:#333;border:none;border-radius:6px;
+                     padding:6px 10px;cursor:pointer;font-size:12px;">
+        Dismiss
+      </button>
+    </div>
+  </div>
+
 
   <!-- ── Bulk Import Modal ── -->
   <div id="bulk-import-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
@@ -936,6 +959,38 @@ function idFor(key, idx){
 // id; harmless if it runs more than once since it always checks for a
 // pre-existing id before assigning a new one.
 let idMigrationInFlight = false;
+
+// Now that records live in their own subcollection, attendance/state only
+// holds students + locks + archivedStudents, which grows far slower — but
+// "far slower" isn't "never," especially archivedStudents (append-only,
+// forever) and a growing active roster over many years. Low urgency
+// compared to what this used to be, but still worth a cheap periodic
+// check rather than assuming the subcollection migration made this
+// document's size a non-issue forever.
+let docSizeCheckInterval = null;
+const DOC_SIZE_HARD_LIMIT = 1048576; // Firestore's actual per-document limit, 1 MiB
+const DOC_SIZE_WARN_THRESHOLD = DOC_SIZE_HARD_LIMIT * 0.7;
+function checkDocumentSizeWarning(){
+  if(currentUserRole !== 'admin') return;
+  const banner = document.getElementById('doc-size-banner');
+  const textEl = document.getElementById('doc-size-banner-text');
+  if(!banner || !textEl) return;
+  try{
+    const json = JSON.stringify({students, locks, archivedStudents});
+    const bytes = new TextEncoder().encode(json).length;
+    if(bytes >= DOC_SIZE_WARN_THRESHOLD){
+      const pct = Math.round((bytes / DOC_SIZE_HARD_LIMIT) * 100);
+      const kb = Math.round(bytes / 1024);
+      textEl.textContent = `Currently using ~${kb.toLocaleString()} KB (~${pct}% of the 1 MB limit).`;
+      banner.style.display = 'block';
+    } else {
+      banner.style.display = 'none';
+    }
+  }catch(e){
+    console.warn('[doc size check] failed:', e.message);
+  }
+}
+
 async function migrateMissingStudentIds(){
   if(currentUserRole !== 'admin') return;
   if(idMigrationInFlight) return;
@@ -948,6 +1003,7 @@ async function migrateMissingStudentIds(){
 
   idMigrationInFlight = true;
   try{
+    const batchEntries = []; // collected across all sections, written once at the end
     for(const key of SEC_KEYS){
       const program = programFor(key);
       const list = students[key] || [];
@@ -964,7 +1020,8 @@ async function migrateMissingStudentIds(){
         const parts = k.split('|');
         const idxStr = parts[2];
         // Already an archive tag, or already an id-shaped key (starts with
-        // either program's fixed prefix) — leave it exactly as it is.
+        // either program's fixed prefix) — leave it exactly as it is, no
+        // Firestore write needed since nothing about it changed.
         if(idxStr.startsWith('__') || idxStr.startsWith(ID_PREFIXES.balaka) || idxStr.startsWith(ID_PREFIXES.yuvaka)){
           rebuilt[k] = records[k];
           return;
@@ -972,7 +1029,15 @@ async function migrateMissingStudentIds(){
         const oldIdx = parseInt(idxStr, 10);
         const suffix = parts[3] ? '|'+parts[3] : '';
         if(!isNaN(oldIdx) && idxToId[oldIdx] !== undefined){
-          rebuilt[key+'|'+parts[1]+'|'+idxToId[oldIdx]+suffix] = records[k];
+          const newKey = key+'|'+parts[1]+'|'+idxToId[oldIdx]+suffix;
+          rebuilt[newKey] = records[k];
+          // Persist the rename: write the new key, delete the old one.
+          // (Deleting a key that only ever lived in the legacy field, not
+          // the subcollection, is a harmless no-op — see the big comment
+          // on migrateRecordsToSubcollection for why that's an acceptable
+          // tradeoff here.)
+          batchEntries.push({key: newKey, value: records[k]});
+          batchEntries.push({key: k, value: null});
         } else {
           // Unrecognized shape for this section — keep as-is rather than
           // silently dropping data we don't understand.
@@ -982,6 +1047,7 @@ async function migrateMissingStudentIds(){
       Object.keys(records).forEach(k=>{ if(k.startsWith(key+'|')) delete records[k]; });
       Object.assign(records, rebuilt);
     }
+    await writeRecordKeysBatch(batchEntries);
     await saveState();
     console.log('[ID migration] complete');
   }catch(e){
@@ -993,7 +1059,19 @@ async function migrateMissingStudentIds(){
 
 
 let students={'old-middle':[],'old-high':[],'new-middle':[],'new-high':[],'yuvaka-sangha':[]};
+// records: the in-memory attendance-mark/tracker map — SAME shape and key
+// format as always ('section|date|studentId' and its '|tracker' variant).
+// Nothing that reads this object (getRecord, setRecord, getStats, every
+// render function) needed to change at all when the underlying storage
+// moved from one big document field to a subcollection — only the sync
+// layer below changed. That's deliberate: keeping this object's shape
+// identical was the single biggest risk-reduction available for this
+// migration.
 let records={};
+// Snapshot of the OLD 'records' field inside attendance/state, if any still
+// exists from before this migration. Only ever read by
+// migrateRecordsToSubcollection() — never used for live rendering.
+let legacyRecordsField=null;
 // locks: key = 'sectionKey|date', value = {lockedBy, lockedByName, lockedAt}
 // Once a session is locked, marks can't be changed directly — only via a
 // correction request that an admin reviews and approves.
@@ -1024,6 +1102,7 @@ let adminsDoc=null;
 let volunteersDoc=null;
 let correctionsCollection=null;
 let auditLogCollection=null;
+let recordsCollection=null;
 let allCorrections=[]; // full live list from Firestore, kept in sync via onSnapshot
 
 // Modal state
@@ -1035,6 +1114,44 @@ function setSyncStatus(status,msg){
   const label=document.getElementById('sync-label');
   dot.className='sync-dot '+status;
   label.textContent=msg;
+}
+
+// ===================== SECURITY: HTML ESCAPING =====================
+// Every one of these fields is user-controlled and gets rendered via
+// innerHTML somewhere in the app: student/volunteer names (typed by an
+// admin, by anyone via bulk import, or by an unvetted self-registration),
+// correction "reason" text (typed by any volunteer), and profession/
+// education details. Without escaping, a name like
+// <img src=x onerror="..."> would silently execute in the browser of every
+// admin or volunteer who later views that row — including in the
+// Approvals tab, which is the single easiest attack path since it doesn't
+// even require an approved account, just submitting the registration form.
+// ALWAYS wrap user-controlled text in escapeHtml() before interpolating it
+// into an innerHTML template string. Values already going through
+// .textContent (not innerHTML) don't need this — the browser escapes those
+// automatically.
+function escapeHtml(str){
+  if(str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// For user text embedded inside a single-quoted JS string literal that is
+// itself inside a double-quoted HTML attribute (e.g. onclick="fn('${x}')").
+// Order matters: escape backslashes first, then quotes for the JS string,
+// then HTML-escape the double-quote so the outer HTML attribute can't be
+// broken out of either.
+function escapeForJsAttr(str){
+  return String(str)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function showToast(msg){
@@ -1070,7 +1187,7 @@ function setPendingSync(val){
 async function trySyncNow(){
   if(!stateDoc || !navigator.onLine) return;
   try{
-    await stateDoc.set({students, records, locks});
+    await stateDoc.set({students, locks});
     setPendingSync(false);
     setSyncStatus('synced','✓ Synced to Firebase');
     showToast('✅ Offline marks synced successfully!');
@@ -1124,13 +1241,29 @@ async function initFirebase(){
     volunteersDoc = db.doc(VOLUNTEERS_DOC_PATH);
     correctionsCollection = db.collection('corrections');
     auditLogCollection = db.collection('auditLog');
+    // Attendance records now live as individual documents in this
+    // subcollection instead of one giant field inside attendance/state.
+    // See the "RECORDS STORAGE" section below for why.
+    recordsCollection = stateDoc.collection('records');
 
-    // Real-time listener — this is now the SOLE writer of students/records/locks.
-    // (Previously, a separate one-time loadState().get() also wrote to these
-    // same variables after showApp() had already rendered, with no guaranteed
-    // ordering between the two — whichever finished last silently won and
-    // could clobber a just-added student. Consolidating to one source of
-    // truth removes that race.)
+    // Real-time listener for students/locks/archivedStudents — small,
+    // slow-growing data that's fine as one document. This is the SOLE
+    // writer of these three (see earlier note on the loadState() race fix).
+    //
+    // Attendance records used to live in this same document too, as a
+    // 'records' field that grew forever with every mark, every session,
+    // every year — with real projected growth (~2MB/year for an org this
+    // size) that would exceed Firestore's 1MB-per-document hard limit
+    // within about 2 years, at which point EVERY write to this document
+    // would start failing outright. Worse, every save rewrote the ENTIRE
+    // document, so two people marking different, unrelated sections at the
+    // same moment could silently overwrite each other's marks — proven by
+    // direct simulation, not just theory.
+    //
+    // Records now live as individual documents in the 'records'
+    // subcollection instead (see initRecordsListener below), which has no
+    // aggregate size limit and where two people's writes go to two
+    // different documents and can never collide.
     stateDoc.onSnapshot(snapshot=>{
       if(snapshot.exists){
         const data = snapshot.data();
@@ -1142,23 +1275,29 @@ async function initFirebase(){
             typeof s === 'string' ? {name:s, class:'', joiningDate:''} : s
           );
         });
-        records = data.records || {};
         locks = data.locks || {};
         archivedStudents = data.archivedStudents || [];
+        // Old-format records, if any exist from before the subcollection
+        // migration — kept ONLY so migrateRecordsToSubcollection() can copy
+        // them forward. Never read for live rendering.
+        legacyRecordsField = data.records || null;
+        rebuildRecordsFromSources();
         setSyncStatus('synced','Synced with Firebase');
         renderCurrent();
       } else {
         // First-ever run for this project — initialize the shared document.
         SEC_KEYS.forEach(key=>students[key]=[]);
-        records={};
         locks={};
         archivedStudents=[];
+        legacyRecordsField=null;
         saveState();
       }
     }, err=>{
       setSyncStatus('error','Firebase sync error');
       loadFromLocalCache();
     });
+
+    initRecordsListener();
 
     auth.onAuthStateChanged(async user=>{
       currentUser = user;
@@ -1257,7 +1396,7 @@ async function saveState(){
   setSyncStatus('syncing','Saving...');
   try{
     if(stateDoc){
-      await stateDoc.set({students, records, locks, archivedStudents});
+      await stateDoc.set({students, locks, archivedStudents});
       setPendingSync(false);
       setSyncStatus('synced','Saved to Firebase ✓');
     } else {
@@ -1270,6 +1409,83 @@ async function saveState(){
     if(!syncRetryTimer){
       syncRetryTimer = setInterval(()=>{ if(navigator.onLine) trySyncNow(); }, 30000);
     }
+  }
+}
+
+// ===================== TARGETED FIELD UPDATES (students/locks/archivedStudents) =====================
+// attendance/state now only holds students, locks, and archivedStudents —
+// attendance records moved to their own subcollection (see the big comment
+// on the stateDoc listener above), which is small and slow-growing, so a
+// full-document .set() on every roster/lock change is a much smaller
+// concern than it used to be for records. BUT the same concurrency risk
+// still applies here in principle: two admins editing the roster or a lock
+// at the exact same moment could still silently overwrite each other with
+// a blind .set(). These helpers use targeted .update() with FieldPath
+// instead, so an edit to one section (or one lock) can never clobber a
+// concurrent edit to a different one.
+async function saveFields(fieldUpdates){
+  persistLocal();
+  if(!navigator.onLine){
+    setPendingSync(true);
+    setSyncStatus('error','⚠️ Offline — saved locally');
+    if(!syncRetryTimer){
+      syncRetryTimer = setInterval(()=>{ if(navigator.onLine) trySyncNow(); }, 30000);
+    }
+    return;
+  }
+  if(!fieldUpdates.length) return;
+
+  setSyncStatus('syncing','Saving...');
+  try{
+    if(!stateDoc) throw new Error('Firebase unavailable');
+    const args = [];
+    fieldUpdates.forEach(([segments, value])=>{
+      args.push(new firebase.firestore.FieldPath(...segments));
+      args.push(value);
+    });
+    await stateDoc.update(...args);
+    setPendingSync(false);
+    setSyncStatus('synced','Saved to Firebase ✓');
+  }catch(e){
+    console.warn('[saveFields] targeted update failed, falling back to full save:', e.message);
+    return saveState();
+  }
+}
+
+// Roster mutation (add/delete/edit/promote/bulk import): scoped to just the
+// section(s) actually touched, and archivedStudents if it changed.
+async function saveRosterChange({ sections = [], archived = false } = {}){
+  const updates = [];
+  [...new Set(sections)].forEach(key => updates.push([['students', key], students[key]]));
+  if(archived) updates.push([['archivedStudents'], archivedStudents]);
+  return saveFields(updates);
+}
+
+// Lock/unlock (single section or all sections): scoped to just the lock
+// key(s) actually touched.
+async function saveLockFields(lockKeys){
+  const updates = [...new Set(lockKeys)].map(lk => [
+    ['locks', lk],
+    locks[lk] === undefined ? firebase.firestore.FieldValue.delete() : locks[lk]
+  ]);
+  return saveFields(updates);
+}
+
+// Attendance marks and tracker entries are already written directly to the
+// records subcollection inside setRecord()/setAttendanceTracker() — there is
+// nothing left to save in attendance/state for a plain mark. This just
+// waits for those writes and drives the same sync-status UI saveState()
+// used to, without ever touching the roster/lock document at all (which is
+// the point — marking attendance has no business overwriting the roster).
+async function saveRecordWrites(writePromises){
+  setSyncStatus('syncing','Saving...');
+  try{
+    await Promise.all(writePromises);
+    setSyncStatus('synced','Saved to Firebase ✓');
+  }catch(e){
+    setPendingSync(true);
+    setSyncStatus('error','⚠️ Sync failed — will retry');
+    console.warn('[saveRecordWrites] failed:', e.message);
   }
 }
 
@@ -1332,6 +1548,10 @@ function showApp(user){
   renderCurrentSection();
   checkYearEndPromotion();
   migrateMissingStudentIds();
+  checkDocumentSizeWarning();
+  if(!docSizeCheckInterval){
+    docSizeCheckInterval = setInterval(checkDocumentSizeWarning, 5*60*1000);
+  }
   initCorrectionsListener();
 }
 
@@ -1502,12 +1722,83 @@ function renderCurrentSection(){renderSection(curSchool['old']);renderSection(cu
 // array position — this is what makes promotion, deletion, and section
 // moves safe: a student's history stays attached to THEM regardless of
 // where they end up sitting in the roster array afterward.
+//
+// Two different key formats are in play, deliberately:
+//  - INTERNAL key (used everywhere in getStats/rendering/exports, unchanged
+//    from before): "section|date|studentId[|tracker]"
+//  - FIRESTORE document ID (used only at the persistence boundary):
+//    "date|section|studentId[|tracker]" — date first, so a range query on
+//    document ID can cheaply fetch "everything in these two years" without
+//    downloading the entire history. This is what actually bounds ongoing
+//    read cost and sync bandwidth as years of data accumulate — the
+//    subcollection move alone fixes the 1 MiB single-document ceiling, but
+//    without this, every client would still download every attendance mark
+//    ever recorded, forever, on every load.
+function parseInternalKey(recordKey){
+  const parts = recordKey.split('|');
+  return { section: parts[0], date: parts[1], studentId: parts[2], isTracker: parts[3]==='tracker' };
+}
+function firestoreDocIdFor(recordKey){
+  const {section, date, studentId, isTracker} = parseInternalKey(recordKey);
+  return date + '|' + section + '|' + studentId + (isTracker ? '|tracker' : '');
+}
+function internalKeyFromDocId(docId){
+  const parts = docId.split('|');
+  // parts[0]=date, parts[1]=section, parts[2]=studentId, parts[3]=optional 'tracker'
+  return parts[1] + '|' + parts[0] + '|' + parts[2] + (parts[3] ? '|'+parts[3] : '');
+}
+
+// Writes (or deletes) exactly ONE attendance-record document. This is the
+// actual persistence point for records now — not saveState(). Most callers
+// don't await this (fire-and-forget): Firestore's own offline persistence
+// (enabled in initFirebase) queues it automatically if the device is
+// offline and retries once connectivity returns, so no custom retry logic
+// is needed here, unlike the old whole-document approach.
+function writeRecordKey(recordKey, value){
+  if(!recordsCollection) return Promise.resolve();
+  const {section, date, studentId} = parseInternalKey(recordKey);
+  const ref = recordsCollection.doc(firestoreDocIdFor(recordKey));
+  return (value === null || value === undefined)
+    ? ref.delete().catch(e=>console.warn('[Records] delete failed for', recordKey, e))
+    : ref.set({v: value, section, date, studentId}).catch(e=>console.warn('[Records] write failed for', recordKey, e));
+}
+
+// For bulk operations that touch many record keys at once (deleting or
+// moving a student's entire attendance history) — one Firestore batch per
+// 450 keys instead of many separate calls, and each batch is atomic.
+async function writeRecordKeysBatch(entries){
+  if(!recordsCollection || !entries.length) return;
+  const CHUNK = 450; // stay safely under Firestore's 500-per-batch limit
+  for(let start=0; start<entries.length; start+=CHUNK){
+    const batch = db.batch();
+    entries.slice(start, start+CHUNK).forEach(({key, value})=>{
+      const {section, date, studentId} = parseInternalKey(key);
+      const ref = recordsCollection.doc(firestoreDocIdFor(key));
+      if(value === null || value === undefined) batch.delete(ref);
+      else batch.set(ref, {v: value, section, date, studentId});
+    });
+    try{ await batch.commit(); }
+    catch(e){ console.warn('[Records] batch write failed', e); }
+  }
+}
+
 function getRecord(k,d,i){const id=idFor(k,i);return records[k+'|'+d+'|'+id]||null;}
-function setRecord(k,d,i,v){const id=idFor(k,i);const rk=k+'|'+d+'|'+id;if(v===null)delete records[rk];else records[rk]=v;}
+function setRecord(k,d,i,v){
+  const id=idFor(k,i);
+  const rk=k+'|'+d+'|'+id;
+  if(v===null) delete records[rk]; else records[rk]=v;
+  return writeRecordKey(rk, v);
+}
 
 // Track who marked attendance
 function getAttendanceTracker(k,d,i){const id=idFor(k,i);const key=k+'|'+d+'|'+id+'|tracker';return records[key] || {name:'',time:'',date:''};}
-function setAttendanceTracker(k,d,i,name,time,date){const id=idFor(k,i);const key=k+'|'+d+'|'+id+'|tracker';records[key]={name,time,date};}
+function setAttendanceTracker(k,d,i,name,time,date){
+  const id=idFor(k,i);
+  const key=k+'|'+d+'|'+id+'|tracker';
+  const trackerVal={name,time,date};
+  records[key]=trackerVal;
+  return writeRecordKey(key, trackerVal);
+}
 
 function getStats(key,idx){
   const id=idFor(key,idx);
@@ -1564,7 +1855,7 @@ function renderSection(key){
   if(locked){
     const lockInfo = locks[key+'|'+curDate] || {};
     html+=`<div style="background:#FFF3CD;border:1.5px solid #FFC107;border-radius:10px;padding:8px 14px;margin-bottom:10px;font-size:12.5px;color:#856404">
-      🔒 <strong>This session is submitted and locked</strong>${lockInfo.lockedByName?' by '+lockInfo.lockedByName:''}. 
+      🔒 <strong>This session is submitted and locked</strong>${lockInfo.lockedByName?' by '+escapeHtml(lockInfo.lockedByName):''}. 
       Marks can no longer be changed directly — tap ✓/✕ to raise a correction request instead.
     </div>`;
   }
@@ -1679,10 +1970,10 @@ function renderSection(key){
       ? `<span title="${s.consAbsent} Sundays absent in a row" style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;background:var(--amber-light);color:var(--amber-dark);font-weight:700;margin-left:5px;vertical-align:middle">⚡ ${s.consAbsent} ABSENT</span>`
       : '';
 
-    html+=`<tr data-name="${name.toLowerCase()}" data-rec="${rec||'U'}">
+    html+=`<tr data-name="${escapeHtml(name.toLowerCase())}" data-rec="${rec||'U'}">
       <td class="col-num" style="color:var(--text4)">${i+1}</td>
-      <td class="col-name"><span style="font-weight:600">${name}</span>${atRiskBadge}${consAbsBadge}<br><span style="font-size:9.5px;color:var(--text4);letter-spacing:.3px">${idFor(key,i)}</span></td>
-      <td class="col-class" style="font-size:11px;color:var(--text2)">${studentClass}</td>
+      <td class="col-name"><span style="font-weight:600">${escapeHtml(name)}</span>${atRiskBadge}${consAbsBadge}<br><span style="font-size:9.5px;color:var(--text4);letter-spacing:.3px">${escapeHtml(idFor(key,i))}</span></td>
+      <td class="col-class" style="font-size:11px;color:var(--text2)">${escapeHtml(studentClass)}</td>
       <td class="col-check"><input type="checkbox" class="present-check" ${rec==='P'?'checked':''} onchange="mark('${key}',${i},'P',this)"></td>
       <td class="col-check"><input type="checkbox" class="absent-check" ${rec==='A'?'checked':''} onchange="mark('${key}',${i},'A',this)"></td>
       <td class="col-sessions"><span class="pill ${pillClass(s.pct)}">${sessLabel}</span></td>
@@ -1704,7 +1995,7 @@ function renderSection(key){
             }
           }
           markedCell = isFirst
-            ? `<span style="color:var(--blue);font-weight:600">${tracker.name}</span><br><span style="font-size:10px;color:var(--text4)">${tracker.time}${tracker.date?' '+fmtDisplay(tracker.date):''}</span>`
+            ? `<span style="color:var(--blue);font-weight:600">${escapeHtml(tracker.name)}</span><br><span style="font-size:10px;color:var(--text4)">${escapeHtml(tracker.time)}${tracker.date?' '+escapeHtml(fmtDisplay(tracker.date)):''}</span>`
             : `<span style="color:var(--text4);font-size:11px">↳</span>`;
         }
         html+=`<td class="col-tracker">${markedCell}</td>`;
@@ -1823,7 +2114,7 @@ async function confirmAddStudent(){
       showToast('✅ ' + name + ' added — previous attendance history restored!');
     }
 
-    await saveState();
+    await saveRosterChange({ sections: [skey], archived: restoredId !== null });
     renderSection(skey);
     closeAddStudentModal();
     if(!restoredId) showToast(name+' added');
@@ -1839,17 +2130,18 @@ async function mark(key,idx,type,el){
     openCorrectionModal(key, idx, type);
     return;
   }
+  const writes = [];
   if(el.checked){
-    setRecord(key,curDate,idx,type);
-    setAttendanceTracker(key,curDate,idx,currentUserName,getCurrentTime(),fmtDate(new Date()));
+    writes.push(setRecord(key,curDate,idx,type));
+    writes.push(setAttendanceTracker(key,curDate,idx,currentUserName,getCurrentTime(),fmtDate(new Date())));
     const oc=type==='P'?'absent-check':'present-check';
     const ob=el.closest('tr').querySelector('.'+oc);
     if(ob)ob.checked=false;
   } else {
-    setRecord(key,curDate,idx,null);
+    writes.push(setRecord(key,curDate,idx,null));
   }
   renderSection(key);filterTable(key);
-  await saveState();
+  await saveRecordWrites(writes);
 }
 
 async function markAll(key,type){
@@ -1858,12 +2150,13 @@ async function markAll(key,type){
     return;
   }
   if(!confirm('Mark ALL '+(type==='P'?'PRESENT':'ABSENT')+'?\n\nThis will overwrite existing marks for all '+students[key].length+' students.'))return;
+  const writes = [];
   students[key].forEach((_,i)=>{
-    setRecord(key,curDate,i,type);
-    setAttendanceTracker(key,curDate,i,currentUserName,getCurrentTime(),fmtDate(new Date()));
+    writes.push(setRecord(key,curDate,i,type));
+    writes.push(setAttendanceTracker(key,curDate,i,currentUserName,getCurrentTime(),fmtDate(new Date())));
   });
   renderSection(key);
-  await saveState();
+  await saveRecordWrites(writes);
   showToast('All marked '+(type==='P'?'present':'absent'));
 }
 
@@ -1934,10 +2227,12 @@ async function confirmDeleteStudent() {
     // array position, so no other student's records are ever touched here
     // — nothing to shift, nothing to renumber.
     if(option === 'delete') {
+      const keysToDelete = [];
       Object.keys(records).forEach(k => {
         const parts = k.split('|');
-        if(parts[0] === key && parts[2] === removedId) delete records[k];
+        if(parts[0] === key && parts[2] === removedId){ delete records[k]; keysToDelete.push(k); }
       });
+      await writeRecordKeysBatch(keysToDelete.map(k=>({key:k, value:null})));
     } else {
       // 'keep' — the id-keyed records stay exactly where they are. Register
       // this student as archived so a later re-add of the same person can
@@ -1954,7 +2249,7 @@ async function confirmDeleteStudent() {
       });
     }
 
-    await saveState();
+    await saveRosterChange({ sections: [key], archived: option === 'keep' });
     renderSection(key);
     showToast(name + (option === 'keep' ? ' removed — records kept 📦' : ' removed — records deleted 🧹'));
     setSyncStatus('synced', 'Saved');
@@ -2160,20 +2455,25 @@ async function confirmEditStudent(){
       students[key].splice(idx, 1);
       students[newSection].push(buildStudent());
 
+      const moveEntries = [];
       Object.keys(records).forEach(k => {
         const parts = k.split('|');
         if(parts[0] === key && parts[2] === movedId){
           const rest = parts.slice(1).join('|');
-          records[newSection + '|' + rest] = records[k];
+          const newKey = newSection + '|' + rest;
+          records[newKey] = records[k];
           delete records[k];
+          moveEntries.push({key: newKey, value: records[newKey]});
+          moveEntries.push({key: k, value: null});
         }
       });
+      await writeRecordKeysBatch(moveEntries);
     } else {
       // Same section — just update in place, same id
       students[key][idx] = buildStudent();
     }
 
-    await saveState();
+    await saveRosterChange({ sections: newSection !== key ? [key, newSection] : [key] });
     renderCurrentSection();
     closeEditStudentModal();
     showToast('✅ Student details updated!');
@@ -2184,7 +2484,7 @@ async function confirmEditStudent(){
 }
 
 // ===================== FEATURE 3: ATTENDANCE HISTORY =====================
-function openHistoryModal(key, idx){
+async function openHistoryModal(key, idx){
   const student = students[key][idx];
   const name = typeof student === 'string' ? student : student.name;
   const cls  = isProfessionSection(key)
@@ -2193,9 +2493,33 @@ function openHistoryModal(key, idx){
   const secLabel = (SECTIONS[key]||{}).label || key;
   const id = idFor(key, idx);
 
-  // Gather all dates for this student — exact match on their permanent id
+  // Open immediately with a loading state — the in-memory windowed records
+  // (current + previous year) render right away, then get replaced by the
+  // student's complete lifetime history once the on-demand fetch resolves.
+  // Without this, opening History would only ever show the live-synced
+  // window, silently missing anything older — which would look exactly
+  // like lost history to whoever's looking, even though it's actually just
+  // sitting in Firestore, unfetched.
+  document.getElementById('history-title').textContent = name;
+  document.getElementById('history-subtitle').textContent = cls + ' · ' + secLabel + ' · ' + id;
+  document.getElementById('history-body').innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">Loading full history...</div>`;
+  document.getElementById('history-modal').classList.add('visible');
+
+  // Baseline: whatever's already in memory for this student (from the
+  // live-synced window), in case the on-demand fetch below fails — better
+  // to show "at least the recent sessions" than nothing at all.
+  const windowedForStudent = {};
+  Object.keys(records).forEach(k=>{
+    const parts = k.split('|');
+    if(parts[0]===key && parts[2]===id) windowedForStudent[k] = records[k];
+  });
+
+  const fullHistory = await fetchFullHistoryForStudent(id);
+  // fullHistory is keyed by the internal format already (section|date|id[|tracker])
+  const merged = Object.assign({}, windowedForStudent, fullHistory);
+
   const allDates = [...new Set(
-    Object.keys(records)
+    Object.keys(merged)
       .filter(k => {
         const parts = k.split('|');
         return parts[0] === key && parts[2] === id && parts.length === 3;
@@ -2203,13 +2527,13 @@ function openHistoryModal(key, idx){
       .map(k => k.split('|')[1])
   )].sort().reverse();
 
-  const present = allDates.filter(d => getRecord(key,d,idx)==='P').length;
-  const absent  = allDates.filter(d => getRecord(key,d,idx)==='A').length;
+  const getRec = d => merged[key+'|'+d+'|'+id] || null;
+  const getTracker = d => merged[key+'|'+d+'|'+id+'|tracker'] || {name:'',time:'',date:''};
+
+  const present = allDates.filter(d => getRec(d)==='P').length;
+  const absent  = allDates.filter(d => getRec(d)==='A').length;
   const total   = allDates.length;
   const pct     = total ? Math.round(present/total*100) : 0;
-
-  document.getElementById('history-title').textContent = name;
-  document.getElementById('history-subtitle').textContent = cls + ' · ' + secLabel + ' · ' + id;
 
   const pctColor = pct>=75?'var(--green)':pct>=50?'var(--amber)':'var(--red)';
   document.getElementById('history-stats').innerHTML = `
@@ -2220,14 +2544,14 @@ function openHistoryModal(key, idx){
   `;
 
   let rows = allDates.map(d => {
-    const rec = getRecord(key, d, idx);
-    const tracker = getAttendanceTracker(key, d, idx);
+    const rec = getRec(d);
+    const tracker = getTracker(d);
     const status = rec==='P'
       ? `<span class="pill pill-green">✓ Present</span>`
       : rec==='A'
         ? `<span class="pill pill-red">✗ Absent</span>`
         : `<span class="pill pill-gray">—</span>`;
-    const markedBy = tracker.name ? `${tracker.name} <span style="color:var(--text4)">${tracker.time}${tracker.date?' '+fmtDisplay(tracker.date):''}</span>` : '—';
+    const markedBy = tracker.name ? `${escapeHtml(tracker.name)} <span style="color:var(--text4)">${escapeHtml(tracker.time)}${tracker.date?' '+escapeHtml(fmtDisplay(tracker.date)):''}</span>` : '—';
     return `<tr>
       <td>${fmtDisplay(d)}</td>
       <td>${MONTHS[parseInt(d.split('-')[1])-1]} ${d.split('-')[0]}</td>
@@ -2243,7 +2567,6 @@ function openHistoryModal(key, idx){
       <thead><tr><th>Date</th><th>Month</th><th>Status</th><th>Marked By</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
-  document.getElementById('history-modal').classList.add('visible');
 }
 function closeHistoryModal(){
   document.getElementById('history-modal').classList.remove('visible');
@@ -2270,7 +2593,7 @@ function globalSearch(query){
   });
 
   if(!matches.length){
-    resultsEl.innerHTML = `<div style="padding:12px 16px;color:var(--text3);font-size:13px">No students found matching "${query}"</div>`;
+    resultsEl.innerHTML = `<div style="padding:12px 16px;color:var(--text3);font-size:13px">No students found matching "${escapeHtml(query)}"</div>`;
     resultsEl.classList.add('visible');
     return;
   }
@@ -2288,14 +2611,14 @@ function globalSearch(query){
       <span style="font-size:18px">👤</span>
       <div style="flex:1">
         <div class="global-result-name">${highlightMatch(m.name, query)}</div>
-        <div class="global-result-meta">${isProfessionSection(m.key) ? m.cls : 'Class '+m.cls} · ${m.section} · Attendance: ${m.pct} · ${statusTag}</div>
+        <div class="global-result-meta">${isProfessionSection(m.key) ? escapeHtml(m.cls) : 'Class '+escapeHtml(m.cls)} · ${escapeHtml(m.section)} · Attendance: ${m.pct} · ${statusTag}</div>
       </div>
-      <span class="global-result-badge">${m.section.split('—')[0].trim()}</span>
+      <span class="global-result-badge">${escapeHtml(m.section.split('—')[0].trim())}</span>
       ${curDate ? `
-      <button onclick="event.stopPropagation();quickMarkFromSearch('${m.key}',${m.i},'P','${query.replace(/'/g,"\\'")}')"
+      <button onclick="event.stopPropagation();quickMarkFromSearch('${m.key}',${m.i},'P','${escapeForJsAttr(query)}')"
               title="Mark present"
               style="background:${presentActive?'#1D9E75':'var(--green-light,#E3F6EE)'};color:${presentActive?'#fff':'#1D9E75'};border:none;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;font-weight:700">✓</button>
-      <button onclick="event.stopPropagation();quickMarkFromSearch('${m.key}',${m.i},'A','${query.replace(/'/g,"\\'")}')"
+      <button onclick="event.stopPropagation();quickMarkFromSearch('${m.key}',${m.i},'A','${escapeForJsAttr(query)}')"
               title="Mark absent"
               style="background:${absentActive?'#C0392B':'var(--red-light,#FBEAEA)'};color:${absentActive?'#fff':'#C0392B'};border:none;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;font-weight:700">✕</button>
       ` : ''}
@@ -2316,11 +2639,13 @@ async function quickMarkFromSearch(key, idx, type, query){
     openCorrectionModal(key, idx, type);
     return;
   }
-  setRecord(key, curDate, idx, type);
-  setAttendanceTracker(key, curDate, idx, currentUserName, getCurrentTime(), fmtDate(new Date()));
+  const writes = [
+    setRecord(key, curDate, idx, type),
+    setAttendanceTracker(key, curDate, idx, currentUserName, getCurrentTime(), fmtDate(new Date()))
+  ];
   renderSection(key);
   filterTable(key);
-  await saveState();
+  await saveRecordWrites(writes);
   const s = students[key][idx];
   const name = typeof s === 'string' ? s : s.name;
   showToast(name + ' marked ' + (type === 'P' ? 'present' : 'absent'));
@@ -2329,8 +2654,8 @@ async function quickMarkFromSearch(key, idx, type, query){
 
 function highlightMatch(name, query){
   const idx = name.toLowerCase().indexOf(query.toLowerCase());
-  if(idx < 0) return name;
-  return name.slice(0, idx) + `<mark style="background:var(--amber-light);color:var(--amber-dark);border-radius:2px">${name.slice(idx, idx+query.length)}</mark>` + name.slice(idx+query.length);
+  if(idx < 0) return escapeHtml(name);
+  return escapeHtml(name.slice(0, idx)) + `<mark style="background:var(--amber-light);color:var(--amber-dark);border-radius:2px">${escapeHtml(name.slice(idx, idx+query.length))}</mark>` + escapeHtml(name.slice(idx+query.length));
 }
 
 function clearGlobalSearch(){
@@ -2655,9 +2980,7 @@ Proceed?`;
       });
     });
 
-    await saveState();
-
-    // Mark promotion done for this year
+    await saveRosterChange({ sections: SECTION_KEYS, archived: true });
     localStorage.setItem('promotion_done_' + new Date().getFullYear(), 'true');
 
     // Hide banner
@@ -2668,8 +2991,8 @@ Proceed?`;
       const list = document.getElementById('graduated-list');
       list.innerHTML = graduated.map(g =>
         `<div style="padding:6px 0;border-bottom:1px solid var(--border);color:var(--text)">
-          🎓 <strong>${g.name}</strong> 
-          <span style="color:var(--text3);font-size:11px;">(${g.section.replace('-',' ')})</span>
+          🎓 <strong>${escapeHtml(g.name)}</strong> 
+          <span style="color:var(--text3);font-size:11px;">(${escapeHtml(g.section.replace('-',' '))})</span>
         </div>`
       ).join('');
       document.getElementById('graduated-overlay').style.display = 'flex';
@@ -2845,9 +3168,9 @@ function handleBulkFile(event) {
       tbody.innerHTML = previewRows.map((r, i) => `
         <tr style="background:${r.valid ? 'transparent' : 'var(--red-light)'}">
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text)">${i+1}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-weight:500;color:var(--text)">${r.name||'—'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${r.secondary||'—'}</td>
-          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${r.joining||'—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-weight:500;color:var(--text)">${escapeHtml(r.name)||'—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${escapeHtml(r.secondary)||'—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${escapeHtml(r.joining)||'—'}</td>
           <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${r.status}</td>
         </tr>
       `).join('');
@@ -2904,7 +3227,7 @@ async function confirmBulkImport() {
       students[key].push(s);
     }
 
-    await saveState();
+    await saveRosterChange({ sections: [key] });
     renderSection(key);
     closeBulkImport();
     showToast('✅ Imported ' + newStudents.length + ' students!');
@@ -2932,7 +3255,7 @@ async function toggleSessionLock(key){
     if(currentUserRole!=='admin'){ showToast('Only an admin can unlock a submitted session'); return; }
     if(!confirm('Unlock '+secLabel+' for '+fmtFull(curDate)+'?\n\nMarks can be edited directly again until re-locked.')) return;
     delete locks[lockKey];
-    await saveState();
+    await saveLockFields([lockKey]);
     showToast('🔓 Session unlocked');
   } else {
     // Both admins and volunteers can submit & lock a session they've
@@ -2943,7 +3266,7 @@ async function toggleSessionLock(key){
       lockedByName: currentUserName||'',
       lockedAt: new Date().toISOString()
     };
-    await saveState();
+    await saveLockFields([lockKey]);
     showToast('🔒 Session submitted and locked');
   }
   renderSection(key);
@@ -2986,7 +3309,7 @@ async function toggleAllSectionsLock(){
   if(allLocked){
     if(!confirm('Unlock ALL sections for '+fmtFull(curDate)+'?\n\nMarks can be edited directly again in every section until re-locked.')) return;
     SEC_KEYS.forEach(k=>delete locks[k+'|'+curDate]);
-    await saveState();
+    await saveLockFields(SEC_KEYS.map(k=>k+'|'+curDate));
     showToast('🔓 All sections unlocked');
   } else {
     if(!confirm('Submit & lock ALL sections for '+fmtFull(curDate)+'?\n\nAfter this, marks in every section can only be changed through a correction request that you review.')) return;
@@ -2997,7 +3320,7 @@ async function toggleAllSectionsLock(){
         lockedAt: new Date().toISOString()
       };
     });
-    await saveState();
+    await saveLockFields(SEC_KEYS.map(k=>k+'|'+curDate));
     showToast('🔒 All sections submitted and locked');
   }
   renderCurrentSection();
@@ -3017,6 +3340,124 @@ async function logAudit(action, details){
       performedAtLocal: new Date().toISOString()
     }, details));
   }catch(e){ console.warn('[Audit] failed to log', e); }
+}
+
+// ---------- Records subcollection (see writeRecordKey/writeRecordKeysBatch
+// above and the big comment on the stateDoc listener for why this exists) ----------
+let latestSubcollectionRecords = {}; // raw cache of what's in the CURRENT WINDOW of the 'records' subcollection
+
+// Merges the new subcollection data with whatever's still sitting in the
+// OLD attendance/state.records field (if any hasn't been migrated yet).
+// Subcollection wins for any key present in both, but nothing that exists
+// ONLY in the old field ever disappears from the UI just because it hasn't
+// been migrated — that would look exactly like silent data loss to an
+// admin, which is precisely what this whole migration exists to prevent.
+function rebuildRecordsFromSources(){
+  records = Object.assign({}, legacyRecordsField || {}, latestSubcollectionRecords);
+  renderCurrent();
+}
+
+// How many years of history to keep live-synced at all times. Covers "this
+// year's sessions" (daily use) and "last year" (year-over-year comparisons
+// in Analytics) without ever downloading the organization's entire history
+// on every login. Older years are fetched on-demand only when a specific
+// feature actually needs them (see fetchFullHistoryForStudent below) —
+// there's no need to keep them resident in memory or re-synced live.
+const RECORDS_WINDOW_YEARS_BACK = 1;
+
+function currentRecordsWindowBounds(){
+  const thisYear = new Date().getFullYear();
+  const startYear = thisYear - RECORDS_WINDOW_YEARS_BACK;
+  const endYearExclusive = thisYear + 1;
+  return { start: startYear + '-01-01', endExclusive: endYearExclusive + '-01-01' };
+}
+
+let recordsListenerUnsubscribe = null;
+function initRecordsListener(){
+  if(!recordsCollection) return;
+  if(recordsListenerUnsubscribe) recordsListenerUnsubscribe(); // avoid stacking listeners if this is ever called again (e.g. after a year rolls over)
+
+  const { start, endExclusive } = currentRecordsWindowBounds();
+  recordsListenerUnsubscribe = recordsCollection
+    .where(firebase.firestore.FieldPath.documentId(), '>=', start)
+    .where(firebase.firestore.FieldPath.documentId(), '<', endExclusive)
+    .onSnapshot(snapshot=>{
+      const fromSubcollection = {};
+      snapshot.forEach(doc=>{ fromSubcollection[internalKeyFromDocId(doc.id)] = doc.data().v; });
+      latestSubcollectionRecords = fromSubcollection;
+      rebuildRecordsFromSources();
+    }, err=>console.warn('[Records] windowed listener error', err));
+}
+
+// On-demand fetch for a SPECIFIC student's complete lifetime history,
+// regardless of the live-synced window above — used by the History modal,
+// which is explicitly asking "show me everything for this one person," not
+// "show me the current session." A one-off .get() (not a persistent
+// listener), filtered by the studentId field rather than a date range,
+// since we don't know in advance which years that student has records in.
+// Firestore auto-indexes single-field equality filters, so this doesn't
+// need any manual index configuration.
+async function fetchFullHistoryForStudent(studentId){
+  if(!recordsCollection) return {};
+  try{
+    const snapshot = await recordsCollection.where('studentId', '==', studentId).get();
+    const result = {};
+    snapshot.forEach(doc=>{ result[internalKeyFromDocId(doc.id)] = doc.data().v; });
+    return result;
+  }catch(e){
+    console.warn('[Records] full-history fetch failed for', studentId, e);
+    return {};
+  }
+}
+
+// Admin-triggered, one-time (but safely re-runnable) migration: copies
+// every entry still sitting in the old attendance/state.records field into
+// the new subcollection. Does NOT clear the old field automatically —
+// that's a separate, explicitly-confirmed action (clearLegacyRecordsField
+// below) so copying-forward and deleting-the-old-copy can never be
+// accidentally combined into one irreversible click.
+async function migrateRecordsToSubcollection(){
+  if(currentUserRole!=='admin'){ showToast('Admin only'); return; }
+  const legacy = legacyRecordsField || {};
+  const keys = Object.keys(legacy);
+  if(!keys.length){
+    showToast('Nothing to migrate — no legacy records field found.');
+    return;
+  }
+  if(!confirm(`Copy ${keys.length} attendance record${keys.length===1?'':'s'} from the old storage into the new one?\n\nThis only copies forward — nothing is deleted, and it's safe to run again if interrupted.`)) return;
+
+  showToast(`Migrating ${keys.length} records — this may take a moment...`);
+  try{
+    const entries = keys.map(k=>({key:k, value:legacy[k]}));
+    await writeRecordKeysBatch(entries);
+    showToast(`✅ Migrated ${keys.length} records. Old data is still kept as a backup until you explicitly clear it.`);
+  }catch(e){
+    showToast('❌ Migration error: '+e.message);
+  }
+}
+
+// Separate, deliberately-harder-to-trigger action: wipes the OLD
+// attendance/state.records field now that its contents are confirmed safe
+// in the new subcollection. Only meaningful to run after
+// migrateRecordsToSubcollection() has succeeded — this is what actually
+// reclaims space in attendance/state and gets it back under Firestore's
+// 1MB document limit for good.
+async function clearLegacyRecordsField(){
+  if(currentUserRole!=='admin'){ showToast('Admin only'); return; }
+  const legacyCount = Object.keys(legacyRecordsField || {}).length;
+  if(!legacyCount){ showToast('Old records field is already empty — nothing to clear.'); return; }
+  const migratedCount = Object.keys(latestSubcollectionRecords).length;
+  if(migratedCount < legacyCount){
+    if(!confirm(`⚠️ Only ${migratedCount} of ${legacyCount} legacy records appear to be in the new storage. Run "Migrate" again first — are you SURE you want to clear the old data anyway? This cannot be undone.`)) return;
+  } else {
+    if(!confirm(`Permanently clear the old attendance records field (${legacyCount} entries)? All ${legacyCount} are confirmed present in the new storage already. This cannot be undone.`)) return;
+  }
+  try{
+    await stateDoc.update({records: firebase.firestore.FieldValue.delete()});
+    showToast('✅ Old records field cleared — attendance/state is back to a small, permanent size.');
+  }catch(e){
+    showToast('❌ Error clearing old field: '+e.message);
+  }
 }
 
 // Live listener for correction requests — keeps the badge count and the
@@ -3066,8 +3507,8 @@ function renderApprovals(){
     const when = (u.createdAt && u.createdAt.toDate) ? u.createdAt.toDate().toLocaleString() : '';
     return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <div>
-        <div style="font-weight:700">${u.name||'(no name)'}</div>
-        <div style="font-size:12.5px;color:var(--text2)">${u.email||''}</div>
+        <div style="font-weight:700">${escapeHtml(u.name)||'(no name)'}</div>
+        <div style="font-size:12.5px;color:var(--text2)">${escapeHtml(u.email)}</div>
         ${when?`<div style="font-size:11px;color:var(--text4);margin-top:4px">Requested ${when}</div>`:''}
       </div>
       <div style="display:flex;gap:8px">
@@ -3183,11 +3624,11 @@ function renderCorrections(){
     return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
         <div>
-          <div style="font-weight:700">${c.studentName}</div>
-          <div style="font-size:12px;color:var(--text3)">${c.sectionLabel} · ${fmtFull(c.date)}</div>
+          <div style="font-weight:700">${escapeHtml(c.studentName)}</div>
+          <div style="font-size:12px;color:var(--text3)">${escapeHtml(c.sectionLabel)} · ${fmtFull(c.date)}</div>
           <div style="font-size:12.5px;margin-top:6px">Change: <strong>${fmtVal(c.oldValue)}</strong> → <strong>${fmtVal(c.newValue)}</strong></div>
-          <div style="font-size:12.5px;color:var(--text2);margin-top:4px">"${c.reason}"</div>
-          <div style="font-size:11px;color:var(--text4);margin-top:6px">Requested by ${c.requestedByName||c.requestedBy}${c.reviewedByName?' · Reviewed by '+c.reviewedByName:''}</div>
+          <div style="font-size:12.5px;color:var(--text2);margin-top:4px">"${escapeHtml(c.reason)}"</div>
+          <div style="font-size:11px;color:var(--text4);margin-top:6px">Requested by ${escapeHtml(c.requestedByName||c.requestedBy)}${c.reviewedByName?' · Reviewed by '+escapeHtml(c.reviewedByName):''}</div>
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
           <span style="background:${statusBg};color:${statusColor};font-weight:700;font-size:11px;padding:3px 10px;border-radius:10px;white-space:nowrap">${c.status.toUpperCase()}</span>
@@ -3232,9 +3673,11 @@ async function approveCorrection(id){
 
   if(!confirm('Approve this correction for '+c.studentName+'?')) return;
   try{
-    setRecord(c.section, c.date, liveIdx, c.newValue);
-    setAttendanceTracker(c.section, c.date, liveIdx, currentUserName, getCurrentTime(), fmtDate(new Date()));
-    await saveState();
+    const writes = [
+      setRecord(c.section, c.date, liveIdx, c.newValue),
+      setAttendanceTracker(c.section, c.date, liveIdx, currentUserName, getCurrentTime(), fmtDate(new Date()))
+    ];
+    await saveRecordWrites(writes);
     await correctionsCollection.doc(id).update({
       status: 'approved',
       reviewedBy: currentUser?currentUser.email:'',
@@ -3277,8 +3720,32 @@ async function renderAuditLog(){
   const el = document.getElementById('auditlog-content');
   if(!el) return;
   if(currentUserRole!=='admin'){ el.innerHTML = '<div class="empty-state">Admin only.</div>'; return; }
-  if(!auditLogCollection){ el.innerHTML = '<div class="empty-state">Not connected.</div>'; return; }
-  el.innerHTML = '<div class="empty-state">Loading audit log...</div>';
+
+  // Storage maintenance panel — shown above the log itself, only when
+  // there's actually legacy data to deal with. This is where
+  // migrateRecordsToSubcollection/clearLegacyRecordsField live: moving
+  // attendance records out of the single attendance/state document (which
+  // has a hard 1MB Firestore limit and, more urgently, meant two people
+  // marking different sections at the same moment could silently overwrite
+  // each other's marks) into their own small documents, one per record.
+  const legacyCount = Object.keys(legacyRecordsField || {}).length;
+  const migratedCount = Object.keys(latestSubcollectionRecords || {}).length;
+  let maintenanceHtml = '';
+  if(legacyCount > 0){
+    const fullyMigrated = migratedCount >= legacyCount;
+    maintenanceHtml = `<div style="background:${fullyMigrated?'#E3F6EE':'#FFF3CD'};border:1.5px solid ${fullyMigrated?'#1D9E75':'#FFC107'};border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-weight:700;margin-bottom:6px">${fullyMigrated?'✅':'⚠️'} Attendance storage maintenance</div>
+      <div style="font-size:12.5px;color:var(--text2);margin-bottom:10px">
+        ${legacyCount} record${legacyCount===1?'':'s'} still in the old storage format.
+        ${fullyMigrated ? 'All appear copied into the new storage already — safe to clear the old copy and reclaim space.' : 'Migrate them to the new per-record storage (safe to run anytime, copies forward only, never deletes).'}
+      </div>
+      <button onclick="migrateRecordsToSubcollection()" style="background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer;margin-right:8px">↪ Migrate to new storage</button>
+      <button onclick="clearLegacyRecordsField()" style="background:#C0392B;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">🗑 Clear old storage${fullyMigrated?'':' (not fully migrated yet)'}</button>
+    </div>`;
+  }
+
+  if(!auditLogCollection){ el.innerHTML = maintenanceHtml + '<div class="empty-state">Not connected.</div>'; return; }
+  el.innerHTML = maintenanceHtml + '<div class="empty-state">Loading audit log...</div>';
   try{
     // Fetch a larger raw batch since we filter down to corrections only —
     // older entries from before this filter existed (routine marks/locks)
@@ -3287,29 +3754,29 @@ async function renderAuditLog(){
     const entries = snap.docs.map(d=>d.data())
       .filter(e => e.action && e.action.startsWith('correction_'))
       .slice(0, 200);
-    if(!entries.length){ el.innerHTML = '<div class="empty-state">No corrections logged yet.</div>'; return; }
-    const fmtVal = v => v==='P' ? 'Present' : v==='A' ? 'Absent' : (v || '—');
+    if(!entries.length){ el.innerHTML = maintenanceHtml + '<div class="empty-state">No corrections logged yet.</div>'; return; }
+    const fmtVal = v => v==='P' ? 'Present' : v==='A' ? 'Absent' : escapeHtml(v || '—');
     const rows = entries.map(e=>{
       const when = (e.performedAt && e.performedAt.toDate) ? e.performedAt.toDate().toLocaleString() : (e.performedAtLocal||'');
       let detail = '';
       if(e.oldValue!==undefined || e.newValue!==undefined){
         detail = fmtVal(e.oldValue)+' → '+fmtVal(e.newValue);
       }
-      if(e.reason) detail += (detail?' · ':'')+'"'+e.reason+'"';
-      if(e.detail) detail += (detail?' · ':'')+e.detail;
+      if(e.reason) detail += (detail?' · ':'')+'"'+escapeHtml(e.reason)+'"';
+      if(e.detail) detail += (detail?' · ':'')+escapeHtml(e.detail);
       return `<tr>
-        <td style="font-size:11.5px;white-space:nowrap">${when}</td>
-        <td style="font-size:12px;white-space:nowrap">${AUDIT_ACTION_LABEL[e.action]||e.action}</td>
-        <td style="font-size:12px">${e.sectionLabel||e.section||''}</td>
-        <td style="font-size:12px">${e.studentName||''}</td>
+        <td style="font-size:11.5px;white-space:nowrap">${escapeHtml(when)}</td>
+        <td style="font-size:12px;white-space:nowrap">${escapeHtml(AUDIT_ACTION_LABEL[e.action]||e.action)}</td>
+        <td style="font-size:12px">${escapeHtml(e.sectionLabel||e.section||'')}</td>
+        <td style="font-size:12px">${escapeHtml(e.studentName||'')}</td>
         <td style="font-size:12px">${detail}</td>
-        <td style="font-size:12px">${e.performedBy||''}</td>
+        <td style="font-size:12px">${escapeHtml(e.performedBy||'')}</td>
       </tr>`;
     }).join('');
-    el.innerHTML = `<h3 style="margin:6px 0 14px">🕵️ Audit Log <span style="font-size:12px;color:var(--text3);font-weight:400">(corrections only — most recent 200)</span></h3>
+    el.innerHTML = maintenanceHtml + `<h3 style="margin:6px 0 14px">🕵️ Audit Log <span style="font-size:12px;color:var(--text3);font-weight:400">(corrections only — most recent 200)</span></h3>
       <table><thead><tr><th>When</th><th>Action</th><th>Section</th><th>Student</th><th>Detail</th><th>By</th></tr></thead><tbody>${rows}</tbody></table>`;
   }catch(e){
-    el.innerHTML = '<div class="empty-state">Could not load audit log: '+e.message+'</div>';
+    el.innerHTML = maintenanceHtml + '<div class="empty-state">Could not load audit log: '+e.message+'</div>';
   }
 }
 
