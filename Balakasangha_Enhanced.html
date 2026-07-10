@@ -3568,6 +3568,13 @@ async function fetchFullHistoryForStudent(studentId){
 // that's a separate, explicitly-confirmed action (clearLegacyRecordsField
 // below) so copying-forward and deleting-the-old-copy can never be
 // accidentally combined into one irreversible click.
+// Tracks exactly which legacy keys have been successfully copied forward.
+// Deliberately NOT based on the windowed records listener
+// (latestSubcollectionRecords) — that only covers the current + previous
+// year, so anything older would incorrectly look "not yet migrated"
+// forever, even immediately after a fully successful migration.
+let legacyKeysConfirmedMigrated = new Set();
+
 async function migrateRecordsToSubcollection(){
   if(currentUserRole!=='admin'){ showToast('Admin only'); return; }
   const legacy = legacyRecordsField || {};
@@ -3582,6 +3589,7 @@ async function migrateRecordsToSubcollection(){
   try{
     const entries = keys.map(k=>({key:k, value:legacy[k]}));
     await writeRecordKeysBatch(entries);
+    keys.forEach(k=>legacyKeysConfirmedMigrated.add(k));
     showToast(`✅ Migrated ${keys.length} records. Old data is still kept as a backup until you explicitly clear it.`);
   }catch(e){
     showToast('❌ Migration error: '+e.message);
@@ -3596,11 +3604,12 @@ async function migrateRecordsToSubcollection(){
 // 1MB document limit for good.
 async function clearLegacyRecordsField(){
   if(currentUserRole!=='admin'){ showToast('Admin only'); return; }
-  const legacyCount = Object.keys(legacyRecordsField || {}).length;
+  const legacyKeys = Object.keys(legacyRecordsField || {});
+  const legacyCount = legacyKeys.length;
   if(!legacyCount){ showToast('Old records field is already empty — nothing to clear.'); return; }
-  const migratedCount = Object.keys(latestSubcollectionRecords).length;
+  const migratedCount = legacyKeys.filter(k=>legacyKeysConfirmedMigrated.has(k)).length;
   if(migratedCount < legacyCount){
-    if(!confirm(`⚠️ Only ${migratedCount} of ${legacyCount} legacy records appear to be in the new storage. Run "Migrate" again first — are you SURE you want to clear the old data anyway? This cannot be undone.`)) return;
+    if(!confirm(`⚠️ Only ${migratedCount} of ${legacyCount} legacy records are confirmed migrated in this session. Run "Migrate" again first — are you SURE you want to clear the old data anyway? This cannot be undone.`)) return;
   } else {
     if(!confirm(`Permanently clear the old attendance records field (${legacyCount} entries)? All ${legacyCount} are confirmed present in the new storage already. This cannot be undone.`)) return;
   }
@@ -3887,7 +3896,7 @@ async function renderAuditLog(){
   // marking different sections at the same moment could silently overwrite
   // each other's marks) into their own small documents, one per record.
   const legacyCount = Object.keys(legacyRecordsField || {}).length;
-  const migratedCount = Object.keys(latestSubcollectionRecords || {}).length;
+  const migratedCount = Object.keys(legacyRecordsField || {}).filter(k=>legacyKeysConfirmedMigrated.has(k)).length;
   let maintenanceHtml = '';
   if(legacyCount > 0){
     const fullyMigrated = migratedCount >= legacyCount;
