@@ -981,7 +981,7 @@ function checkDocumentSizeWarning(){
     if(bytes >= DOC_SIZE_WARN_THRESHOLD){
       const pct = Math.round((bytes / DOC_SIZE_HARD_LIMIT) * 100);
       const kb = Math.round(bytes / 1024);
-      textEl.textContent = `Currently using ~${kb.toLocaleString()} KB (~${pct}% of the 1 MB limit).`;
+      textEl.textContent = `Currently using ~${kb.toLocaleString()} KB (~${pct}% of the 1 MB limit). Consider archiving graduated/inactive students' older data, or check in with your developer.`;
       banner.style.display = 'block';
     } else {
       banner.style.display = 'none';
