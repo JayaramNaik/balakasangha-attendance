@@ -3233,11 +3233,34 @@ function handleBulkFile(event) {
       };
 
       if (file.name.endsWith('.csv')) {
-        // Parse CSV
+        // Parse CSV — respecting quoted fields that contain commas (e.g. a
+        // profession detail like "Software Engineer, Backend"). A plain
+        // line.split(',') would silently misalign every column after that
+        // point for that row — not a crash, just quietly wrong data, which
+        // is worse than an error since nothing would look obviously broken.
+        const parseCSVLine = (line) => {
+          const result = [];
+          let cur = '';
+          let inQuotes = false;
+          for(let i=0; i<line.length; i++){
+            const c = line[i];
+            if(inQuotes){
+              if(c === '"' && line[i+1] === '"'){ cur += '"'; i++; }
+              else if(c === '"'){ inQuotes = false; }
+              else cur += c;
+            } else {
+              if(c === '"'){ inQuotes = true; }
+              else if(c === ','){ result.push(cur); cur = ''; }
+              else cur += c;
+            }
+          }
+          result.push(cur);
+          return result.map(v => v.trim());
+        };
         const text = e.target.result;
         const lines = text.split('\n').filter(l => l.trim());
         rows = lines.slice(1).map(line => {
-          const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+          const vals = parseCSVLine(line);
           if(profession){
             return { name: vals[0]||'', type: vals[1]||'', detail: vals[2]||'', joiningDate: parseDate(vals[3]) };
           }
