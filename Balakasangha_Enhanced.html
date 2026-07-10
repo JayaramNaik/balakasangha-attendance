@@ -689,6 +689,20 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
   <!-- APPROVALS VIEW -->
   <div id="approvals-view" class="panel">
+    <div id="promotion-utility-box" style="display:none;background:var(--surface);border:1px solid var(--border2);
+         border-radius:10px;padding:14px;margin-bottom:16px;">
+      <div style="font-weight:700;margin-bottom:4px">🎓 Class Promotion</div>
+      <div style="font-size:12.5px;color:var(--text3);margin-bottom:10px">
+        This normally runs automatically on the first Sunday of June (with a reminder banner the
+        Sunday before). This button is here for the rare cases that need it outside that window —
+        testing, or catching up a year that was missed entirely.
+      </div>
+      <button onclick="runClassPromotion()"
+              style="background:#185FA5;color:#fff;border:none;border-radius:6px;
+                     padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;">
+        🎓 Run Promotion Now
+      </button>
+    </div>
     <div id="approvals-content"></div>
   </div>
 </div>
@@ -890,11 +904,14 @@ function exportFilePrefix(key){ return isProfessionSection(key) ? 'YuvakaSangha'
 //   53    = VBS founded 1953
 //   VBS/VYS = which program the person FIRST joined under
 //   <year> = last 3 digits of the joining year, set once, never recalculated
-//   <serial> = a counter that runs continuously, never resetting, never
-//              reused — this is what makes the ID permanent and unique
-// Balaka Sangha and Yuvaka Sangha each have their OWN counter, so their
-// numbers never interleave with each other (Balaka Sangha's 5th student and
-// Yuvaka Sangha's 5th member don't collide or share a sequence).
+//   <serial> = a counter starting at 001 for each new calendar year, per
+//              program — the 26th student joining Balaka Sangha in 2026 is
+//              ...026026, and the very first one joining in 2027 restarts
+//              at ...027001. Never reused within a given year, but the
+//              counter itself resets every January 1st, per program.
+// Balaka Sangha and Yuvaka Sangha each have their OWN counter (and their
+// own per-year reset), so their numbers never interleave with each other
+// even within the same year.
 //
 // The ID is assigned once, at the time a person FIRST joins either program,
 // and never changes again — including if a VBS student later grows up and
@@ -911,17 +928,6 @@ function programFor(key){
   return key === 'yuvaka-sangha' ? 'yuvaka' : 'balaka';
 }
 
-async function nextSerial(program){
-  if(!db) throw new Error('Firebase not ready');
-  const counterRef = db.doc(ID_COUNTER_PATHS[program] || ID_COUNTER_PATHS.balaka);
-  return await db.runTransaction(async (tx) => {
-    const snap = await tx.get(counterRef);
-    const current = (snap.exists && typeof snap.data().nextSerial === 'number') ? snap.data().nextSerial : 1;
-    tx.set(counterRef, { nextSerial: current + 1 }, { merge: true });
-    return current;
-  });
-}
-
 function studentIdYearPart(joiningDateStr){
   let year = new Date().getFullYear();
   if(joiningDateStr){
@@ -931,10 +937,29 @@ function studentIdYearPart(joiningDateStr){
   return String(year % 1000).padStart(3, '0');
 }
 
+// Each counter document holds one field per year: { serials: { "026": 5,
+// "027": 1, ... } }. A transaction reads the whole map, reads (or defaults)
+// just that one year's count, increments it, and writes the complete map
+// back — so two people joining the same program in the same year still
+// can't ever collide, and a new year always starts fresh at 1 without
+// needing any separate "reset" step or scheduled job.
+async function nextSerial(program, yearKey){
+  if(!db) throw new Error('Firebase not ready');
+  const counterRef = db.doc(ID_COUNTER_PATHS[program] || ID_COUNTER_PATHS.balaka);
+  return await db.runTransaction(async (tx) => {
+    const snap = await tx.get(counterRef);
+    const serials = (snap.exists && snap.data().serials) ? snap.data().serials : {};
+    const current = (typeof serials[yearKey] === 'number') ? serials[yearKey] : 1;
+    tx.set(counterRef, { serials: { ...serials, [yearKey]: current + 1 } });
+    return current;
+  });
+}
+
 async function generateStudentId(joiningDateStr, program){
   const prog = (program === 'yuvaka') ? 'yuvaka' : 'balaka';
-  const serial = await nextSerial(prog);
-  return ID_PREFIXES[prog] + studentIdYearPart(joiningDateStr) + String(serial).padStart(3, '0');
+  const yearPart = studentIdYearPart(joiningDateStr);
+  const serial = await nextSerial(prog, yearPart);
+  return ID_PREFIXES[prog] + yearPart + String(serial).padStart(3, '0');
 }
 
 // Returns the permanent id for the student currently at students[key][idx].
@@ -1088,6 +1113,62 @@ const now=new Date();
 let curMonth=now.getMonth(),curYear=now.getFullYear();
 let curDate=null,curView='attendance',curType='old';
 let curSchool={old:'old-middle',new:'new-middle',yuvaka:'yuvaka-sangha'};
+
+// Display-only sort for the attendance table — does NOT change the stored
+// order of students[key] at all (that stays exactly as insertion order,
+// which is what "Order Added" shows), so this is purely a rendering
+// choice. Safe by construction: since attendance records are keyed by each
+// student's permanent id rather than their array position, re-ordering how
+// rows are DISPLAYED can never cause any record to attach to the wrong
+// person, no matter which sort mode is active or how many different people
+// are viewing the same section with different sort choices at once.
+let curSort = 'added'; // 'added' | 'name' | 'id'
+function setSortMode(mode){
+  curSort = mode;
+  renderCurrentSection();
+}
+
+// Parses a permanent student ID into its parts for correct numeric
+// comparison. IDs are fixed-shape: a 6-character prefix (R53VBS/R53VYS),
+// then a 3-digit joining year, then a serial number. Comparing the PARSED
+// numbers (not the raw string) is what makes "join year order" reliable —
+// a plain string comparison would usually happen to work, but would break
+// silently the day any single year's serial count reaches 4 digits (e.g.
+// "999" sorting after "1000" as text, even though 999 joined earlier).
+function parseStudentId(id){
+  if(!id || id.length < 9) return { prefix: id || '', year: 0, serial: 0 };
+  return {
+    prefix: id.slice(0, 6),
+    year: parseInt(id.slice(6, 9), 10) || 0,
+    serial: parseInt(id.slice(9), 10) || 0
+  };
+}
+function compareStudentIds(idA, idB){
+  const a = parseStudentId(idA), b = parseStudentId(idB);
+  if(a.year !== b.year) return a.year - b.year;       // earlier joining year always first
+  if(a.serial !== b.serial) return a.serial - b.serial; // then join order within that year
+  return a.prefix.localeCompare(b.prefix);              // tiebreak, shouldn't normally matter
+}
+
+// Returns the array indices for students[key] in the CURRENT sort order.
+// Callers still use the returned index (i) for every actual data lookup
+// (getRecord, getStats, mark, edit, delete, history) — only the ITERATION
+// order changes, nothing about how any individual student's data is found.
+function sortedIndices(key){
+  const st = students[key] || [];
+  const idxs = st.map((_, i) => i);
+  if(curSort === 'name'){
+    idxs.sort((a, b) => {
+      const nameA = (typeof st[a]==='string' ? st[a] : (st[a].name||'')).toLowerCase();
+      const nameB = (typeof st[b]==='string' ? st[b] : (st[b].name||'')).toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+  } else if(curSort === 'id'){
+    idxs.sort((a, b) => compareStudentIds(idFor(key, a), idFor(key, b)));
+  }
+  // 'added' (default): idxs is already [0,1,2,...] — original insertion order
+  return idxs;
+}
 const chartInstances={};
 
 // User & Auth
@@ -1205,6 +1286,26 @@ window.addEventListener('online', ()=>{
   }
 });
 
+// A phone screen locking, or switching apps, can leave this page sitting in
+// the background for a long time. The underlying data listeners keep
+// receiving live updates the whole time (corrections, records, roster —
+// all still correctly in sync), but several views only re-render when
+// their own tab is the ACTIVE one at the moment new data arrives (see
+// initCorrectionsListener, for example). Coming back to a backgrounded tab
+// showing a "Pending" correction that was actually already approved/rejected
+// hours ago is exactly that: correct underlying data, stale render. Forcing
+// a re-render of whatever view is currently open when the tab becomes
+// visible again closes that gap directly.
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState !== 'visible') return;
+  if(!currentUser) return;
+  if(curView==='attendance') renderCurrentSection();
+  else if(curView==='analytics') renderAnalytics();
+  else if(curView==='corrections') renderCorrections();
+  else if(curView==='auditlog') renderAuditLog();
+  else if(curView==='approvals') renderApprovals();
+});
+
 window.addEventListener('offline', ()=>{
   setSyncStatus('error','⚠️ Offline — marks saved locally');
   showToast('⚠️ No internet — marks saved locally, will auto-sync when online');
@@ -1299,9 +1400,26 @@ async function initFirebase(){
 
     initRecordsListener();
 
+// Guards against onAuthStateChanged showing the app for an account that's
+// still in the middle of being registered. Firebase logs a brand-new
+// account in immediately as a side effect of createUserWithEmailAndPassword
+// — before registerUser()'s own .then() chain has had a chance to write
+// the users/{uid} profile doc (with status:'pending') or sign back out.
+// Without this guard, onAuthStateChanged and registerUser() are two
+// separate, uncoordinated async flows racing each other: if the auth-state
+// event fires first, loadUserRole() finds no profile doc yet, defaults to
+// treating that as an already-approved grandfathered account (the same
+// default that correctly protects real pre-existing volunteers with no
+// status field), and briefly — or not so briefly, depending on timing —
+// shows the full volunteer interface to a brand-new, not-yet-approved
+// registrant. This flag makes onAuthStateChanged simply ignore that
+// transient sign-in event entirely; registerUser() is already handling it.
+let isRegisteringNewAccount = false;
+
     auth.onAuthStateChanged(async user=>{
       currentUser = user;
       if(user){
+        if(isRegisteringNewAccount) return; // registerUser()'s own flow owns this account right now
         await loadUserRole(user);
         showApp(user);
       } else {
@@ -1591,6 +1709,7 @@ function registerUser(){
   }
   
   setSyncStatus('syncing','Registering...');
+  isRegisteringNewAccount = true;
   auth.createUserWithEmailAndPassword(email,password).then(async (userCred)=>{
     // Save user info. status:'pending' means this account has NO write
     // access to attendance data until an admin approves it (see
@@ -1603,9 +1722,11 @@ function registerUser(){
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
     await auth.signOut(); // don't leave them signed into a pending/no-access session
+    isRegisteringNewAccount = false;
     showToast('Account created — an admin needs to approve it before you can sign in.');
     showLoginMode();
   }).catch(e=>{
+    isRegisteringNewAccount = false;
     setSyncStatus('error','Registration failed');
     showError(e.message,'register-error');
   });
@@ -1872,6 +1993,11 @@ function renderSection(key){
     <select id="filter-${key}" onchange="filterTable('${key}')">
       <option value="">All</option><option value="P">Present</option><option value="A">Absent</option><option value="U">Not marked</option>
     </select>
+    <select id="sort-${key}" onchange="setSortMode(this.value)" title="Sort order — display only, doesn't change the stored roster order">
+      <option value="added" ${curSort==='added'?'selected':''}>Order Added</option>
+      <option value="name" ${curSort==='name'?'selected':''}>Name (A-Z)</option>
+      <option value="id" ${curSort==='id'?'selected':''}>ID (Join Order)</option>
+    </select>
     <button class="btn-sm btn-green" onclick="markAll('${key}','P')">✓ All present</button>
     <button class="btn-sm btn-red" onclick="markAll('${key}','A')">✗ All absent</button>
   </div>`;
@@ -1944,7 +2070,10 @@ function renderSection(key){
   html+=`<th style="width:28px"></th>`;
   html+=`</tr></thead><tbody id="tbody-${key}">`;
 
-  st.forEach((student,i)=>{
+  let displayPos = 0;
+  sortedIndices(key).forEach(i=>{
+    const student = st[i];
+    displayPos++;
     const name=typeof student==='string'?student:student.name;
     const studentClass=secondaryFieldValue(key, student);
     const rec=getRecord(key,curDate,i),s=getStats(key,i);
@@ -1971,7 +2100,7 @@ function renderSection(key){
       : '';
 
     html+=`<tr data-name="${escapeHtml(name.toLowerCase())}" data-rec="${rec||'U'}">
-      <td class="col-num" style="color:var(--text4)">${i+1}</td>
+      <td class="col-num" style="color:var(--text4)">${displayPos}</td>
       <td class="col-name"><span style="font-weight:600">${escapeHtml(name)}</span>${atRiskBadge}${consAbsBadge}<br><span style="font-size:9.5px;color:var(--text4);letter-spacing:.3px">${escapeHtml(idFor(key,i))}</span></td>
       <td class="col-class" style="font-size:11px;color:var(--text2)">${escapeHtml(studentClass)}</td>
       <td class="col-check"><input type="checkbox" class="present-check" ${rec==='P'?'checked':''} onchange="mark('${key}',${i},'P',this)"></td>
@@ -2874,6 +3003,29 @@ function fmtDateOnly(d) {
   return d.toISOString().split('T')[0];
 }
 
+// Shared, cross-device guard against running promotion more than once in
+// the same year. The old version used localStorage, which is per-browser —
+// if this org has more than one admin (the normal case), each admin's own
+// device would have its OWN "already done" flag, meaning an admin who
+// simply hadn't opened the app yet that week would see "not done" and
+// silently re-run promotion — auto mode has no confirmation dialog, so
+// this would double-promote everyone (class 6→8 instead of 6→7) with no
+// warning to anyone. A Firestore transaction makes "claiming" this year's
+// promotion atomic and shared: whichever admin's device gets there first
+// wins, and every other device correctly sees it's already been claimed.
+const PROMOTION_STATUS_DOC_PATH = 'attendance/promotionStatus';
+async function claimYearPromotion(year){
+  if(!db) return false;
+  const ref = db.doc(PROMOTION_STATUS_DOC_PATH);
+  return await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const lastPromotedYear = (snap.exists && typeof snap.data().lastPromotedYear === 'number') ? snap.data().lastPromotedYear : 0;
+    if(lastPromotedYear >= year) return false; // someone else already claimed/ran this year
+    tx.set(ref, { lastPromotedYear: year });
+    return true; // this device just won the race — go ahead and run it
+  });
+}
+
 function checkYearEndPromotion() {
   if(currentUserRole !== 'admin') return;
 
@@ -2882,27 +3034,23 @@ function checkYearEndPromotion() {
   const firstJuneSunday = getFirstSundayOfJune(today.getFullYear());
   const todayStr = fmtDateOnly(today);
   const lastMayStr = fmtDateOnly(lastMaySunday);
-  const firstJuneStr = fmtDateOnly(firstJuneSunday);
-
-  // Check if promotion already done this year
-  const doneKey = 'promotion_done_' + today.getFullYear();
-  const alreadyDone = localStorage.getItem(doneKey) === 'true';
-
-  if(alreadyDone) return;
 
   // Show reminder on last Sunday of May
   if(todayStr === lastMayStr) {
     document.getElementById('upgrade-banner').style.display = 'block';
   }
 
-  // Auto-promote on/after the first Sunday of June. Previously this only
-  // matched the exact date (todayStr === firstJuneStr) — if no admin opened
-  // the app on that specific Sunday, promotion silently never ran that year
-  // until someone noticed and triggered it manually. Using >= with the
-  // alreadyDone/doneKey guard above means any admin login on or after that
-  // date catches it up, exactly once, without needing that one exact day.
+  // Auto-promote on/after the first Sunday of June. Using >= (not an exact
+  // date match) means any admin login on or after that date catches it up,
+  // however late — this is intentionally open-ended, not capped at any
+  // fixed window, since the alternative (missing the window entirely) is
+  // worse than being a few weeks late. The claimYearPromotion() transaction
+  // above is what makes this safe with multiple admins: only the first
+  // device to check in after the date actually runs it.
   if(today >= firstJuneSunday) {
-    runClassPromotion(true); // true = auto (no confirm dialog)
+    claimYearPromotion(today.getFullYear()).then(won => {
+      if(won) runClassPromotion(true); // true = auto (no confirm dialog)
+    });
   }
 }
 
@@ -2981,7 +3129,11 @@ Proceed?`;
     });
 
     await saveRosterChange({ sections: SECTION_KEYS, archived: true });
-    localStorage.setItem('promotion_done_' + new Date().getFullYear(), 'true');
+    // Mark this year as done in the SHARED record (not just for auto-runs —
+    // a manual "Promote Now" click needs to claim the year too, or a later
+    // automatic check-in from a different admin would see it as
+    // unclaimed and silently re-run it).
+    await db.doc(PROMOTION_STATUS_DOC_PATH).set({ lastPromotedYear: new Date().getFullYear() }, { merge: true });
 
     // Hide banner
     document.getElementById('upgrade-banner').style.display = 'none';
@@ -3498,7 +3650,13 @@ function initPendingUsersListener(){
 function renderApprovals(){
   const el = document.getElementById('approvals-content');
   if(!el) return;
-  if(currentUserRole!=='admin'){ el.innerHTML = '<div class="empty-state">Admin only.</div>'; return; }
+  const promoBox = document.getElementById('promotion-utility-box');
+  if(currentUserRole!=='admin'){
+    if(promoBox) promoBox.style.display = 'none';
+    el.innerHTML = '<div class="empty-state">Admin only.</div>';
+    return;
+  }
+  if(promoBox) promoBox.style.display = 'block';
   if(!allPendingUsers.length){
     el.innerHTML = '<div class="empty-state">No pending account requests right now.</div>';
     return;
