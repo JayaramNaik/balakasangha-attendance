@@ -2029,8 +2029,11 @@ function renderSection(key){
     <button class="btn-sm btn-red" onclick="markAll('${key}','A')">✗ All absent</button>
   </div>`;
   
-  // Add student button - only for admin
-  if(currentUserRole==='admin'){
+  // Add/Request student row — admin gets "+ Add" + Bulk Import, volunteer
+  // gets "📨 Request to Add" (same modal, different behavior — see
+  // openAddStudentModal/confirmAddStudent). Shown to both roles; only the
+  // Bulk Import button stays admin-only.
+  if(currentUserRole==='admin' || currentUserRole==='volunteer'){
     html+=`<div class="add-row">
       <input type="text" id="new-${key}" placeholder="Add ${isProfessionSection(key)?'volunteer':'student'} name..." onkeydown="if(event.key==='Enter')openAddStudentModal('${key}')">
       <button onclick="openAddStudentModal('${key}')">${currentUserRole==='admin'?'+ Add':'📨 Request to Add'}</button>
