@@ -1,4 +1,4 @@
-const CACHE_NAME = 'balaka-v8';
+const CACHE_NAME = 'balaka-v9';
 
 // Derive BASE from the service worker's own location instead of hardcoding
 // '/balakasangha-attendance'. Previously, if this file were ever served from

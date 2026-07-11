@@ -3059,6 +3059,23 @@ function renderAnalytics(){
 <script>
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('service-worker.js').then(()=>console.log('SW registered')).catch(()=>console.log('SW register failed'));
+
+  // Without this, a new service worker version can install and take over
+  // network requests (via skipWaiting()/clients.claim() in
+  // service-worker.js) while anyone who ALREADY has the app open keeps
+  // running the OLD JS silently in memory — nothing forces their existing
+  // tab to actually pick up the update until they happen to close and
+  // reopen it themselves. This reloads automatically the moment a new
+  // service worker actually takes control, so "I deployed a fix but people
+  // are still seeing the old version" stops being something that can
+  // happen silently. Guarded against reloading more than once per page
+  // load, since controllerchange can otherwise fire more than once.
+  let reloadedForNewSW = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if(reloadedForNewSW) return;
+    reloadedForNewSW = true;
+    window.location.reload();
+  });
 }
 
 // ===================== YEAR-END CLASS PROMOTION =====================
