@@ -806,7 +806,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
 <!-- STUDENT ADD MODAL -->
 <div id="add-student-modal" class="modal">
   <div class="modal-content">
-    <div class="modal-title">Add New Student</div>
+    <div class="modal-title" id="add-student-modal-title">Add New Student</div>
     <div class="modal-group">
       <label for="modal-student-name" id="modal-student-name-label">Student Name *</label>
       <input type="text" id="modal-student-name" placeholder="Full name">
@@ -844,7 +844,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
       <input type="date" id="modal-student-joining">
     </div>
     <div class="modal-buttons">
-      <button class="modal-btn modal-btn-primary" onclick="confirmAddStudent()">Add Student</button>
+      <button class="modal-btn modal-btn-primary" id="add-student-submit-btn" onclick="confirmAddStudent()">Add Student</button>
       <button class="modal-btn modal-btn-secondary" onclick="closeAddStudentModal()">Cancel</button>
     </div>
   </div>
@@ -883,6 +883,29 @@ const BALAKA_SEC_KEYS=SEC_KEYS.filter(k=>SECTIONS[k].type!=='yuvaka');
 // A section can define fieldType:'profession' (Yuvaka Sangha) instead of the
 // default Class field. These helpers keep every render/export site in sync.
 function isProfessionSection(key){ return (SECTIONS[key]||{}).fieldType === 'profession'; }
+
+// Middle School = Class 4-7, High School = Class 8-10. Previously the class
+// dropdown offered 5-10 regardless of which section you were adding to —
+// meaning nothing stopped a Class 8 student from being added to a Middle
+// School section, or Class 4 wasn't even selectable at all. Populating the
+// dropdown with only the valid range for whichever section is selected
+// makes the invalid combination impossible to create through the UI,
+// rather than just detecting it after the fact.
+const CLASS_RANGES = { middle: [4,5,6,7], high: [8,9,10] };
+function schoolLevelForKey(key){
+  if(!key) return null;
+  if(key.includes('high')) return 'high';
+  if(key.includes('middle')) return 'middle';
+  return null; // yuvaka-sangha — class/school-level doesn't apply
+}
+function populateClassOptions(selectEl, key, currentValue){
+  if(!selectEl) return;
+  const level = schoolLevelForKey(key);
+  const range = level ? CLASS_RANGES[level] : [4,5,6,7,8,9,10];
+  selectEl.innerHTML = '<option value="">Select Class</option>' +
+    range.map(c => `<option value="${c}">Class ${c}</option>`).join('');
+  if(currentValue && range.includes(parseInt(currentValue,10))) selectEl.value = String(currentValue);
+}
 function secondaryFieldLabel(key){ return isProfessionSection(key) ? 'Profession/Education' : 'Class'; }
 // Yuvaka Sangha members aren't "students" anymore — label the name field
 // accordingly wherever a section-specific label is shown.
@@ -1184,6 +1207,7 @@ let volunteersDoc=null;
 let correctionsCollection=null;
 let auditLogCollection=null;
 let recordsCollection=null;
+let studentAddRequestsCollection=null;
 let allCorrections=[]; // full live list from Firestore, kept in sync via onSnapshot
 
 // Modal state
@@ -1342,6 +1366,7 @@ async function initFirebase(){
     volunteersDoc = db.doc(VOLUNTEERS_DOC_PATH);
     correctionsCollection = db.collection('corrections');
     auditLogCollection = db.collection('auditLog');
+    studentAddRequestsCollection = db.collection('studentAddRequests');
     // Attendance records now live as individual documents in this
     // subcollection instead of one giant field inside attendance/state.
     // See the "RECORDS STORAGE" section below for why.
@@ -1660,6 +1685,7 @@ function showApp(user){
     auditlogTab.style.display='';
     approvalsTab.style.display='';
     initPendingUsersListener();
+    initStudentRequestsListener();
   }
   
   buildSundayBtns();
@@ -1671,6 +1697,7 @@ function showApp(user){
     docSizeCheckInterval = setInterval(checkDocumentSizeWarning, 5*60*1000);
   }
   initCorrectionsListener();
+  initMyStudentRequestsListener();
 }
 
 function showPendingApprovalScreen(user){
@@ -2006,7 +2033,7 @@ function renderSection(key){
   if(currentUserRole==='admin'){
     html+=`<div class="add-row">
       <input type="text" id="new-${key}" placeholder="Add ${isProfessionSection(key)?'volunteer':'student'} name..." onkeydown="if(event.key==='Enter')openAddStudentModal('${key}')">
-      <button onclick="openAddStudentModal('${key}')">+ Add</button>
+      <button onclick="openAddStudentModal('${key}')">${currentUserRole==='admin'?'+ Add':'📨 Request to Add'}</button>
       ${currentUserRole==='admin'?`<button onclick="openBulkImport('${key}')" style="background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📥 Bulk Import</button>`:''}
     </div>`;
   }
@@ -2139,7 +2166,7 @@ function renderSection(key){
   });
   
   html+=`</tbody></table>`;
-  if(!st.length)html+=`<div class="empty-state">No students yet. ${currentUserRole==='admin'?'Add one above.':'Contact admin to add students.'}</div>`;
+  if(!st.length)html+=`<div class="empty-state">No students yet. ${currentUserRole==='admin'?'Add one above.':'Use "Request to Add" above to ask an admin to add one.'}</div>`;
   panel.innerHTML=html;
 }
 
@@ -2147,7 +2174,7 @@ function renderSection(key){
 function openAddStudentModal(key){
   addStudentContext.key=key;
   document.getElementById('modal-student-name').value='';
-  document.getElementById('modal-student-class').value='';
+  populateClassOptions(document.getElementById('modal-student-class'), key);
   document.getElementById('modal-student-profession-type').value='';
   document.getElementById('modal-student-profession-detail').value='';
   document.getElementById('modal-student-joining').value=fmtDate(new Date());
@@ -2159,11 +2186,65 @@ function openAddStudentModal(key){
   // always, by definition, a fresh VBS join.
   document.getElementById('add-origin-group').style.display = (key === 'yuvaka-sangha') ? 'block' : 'none';
   document.getElementById('modal-student-name-label').textContent = nameFieldLabel(key)+' *';
+  const isAdmin = currentUserRole === 'admin';
+  document.getElementById('add-student-modal-title').textContent = isAdmin ? 'Add New Student' : 'Request to Add a Student';
+  document.getElementById('add-student-submit-btn').textContent = isAdmin ? 'Add Student' : 'Send Request to Admin';
   document.getElementById('add-student-modal').classList.add('visible');
 }
 
 function closeAddStudentModal(){
   document.getElementById('add-student-modal').classList.remove('visible');
+}
+
+// Duplicate-name check across ALL sections. Returns the section key a
+// duplicate was found in, or null if the name is free to use.
+function findDuplicateStudentName(name) {
+  let duplicateSection = null;
+  Object.keys(students).forEach(sec => {
+    (students[sec] || []).forEach(s => {
+      const sName = (typeof s === 'object' ? s.name : s).trim().toLowerCase();
+      if(sName === name.toLowerCase()) duplicateSection = sec;
+    });
+  });
+  return duplicateSection;
+}
+
+// Looks up whether an archived (departed or graduated) student matches
+// this name, and if so, asks whoever's actually deciding (the admin adding
+// directly, or the admin reviewing a volunteer's request) whether to
+// restore that exact original id + history. Returns the id to reuse, or
+// null if there's no match or the decision was "no, different person."
+function checkArchiveRestore(name) {
+  const matchIdx = archivedStudents.findIndex(a => (a.name||'').trim().toLowerCase() === name.toLowerCase());
+  if(matchIdx === -1) return null;
+  const match = archivedStudents[matchIdx];
+  const whenLabel = match.archivedAt ? fmtDisplay(match.archivedAt) : 'previously';
+  const secLabel = (SECTIONS[match.section]||{}).label || match.section;
+  const proceedRestore = confirm(
+    'Found a previous student record for "' + name + '"\n' +
+    '(' + (match.reason==='graduated' ? 'graduated from' : 'left') + ' ' + secLabel + ' on ' + whenLabel + ').\n\n' +
+    'If this is the same person rejoining, click OK to restore their attendance history.\n' +
+    'If this is a different person who just happens to share this name, click Cancel to start with a clean record.'
+  );
+  if(!proceedRestore) return null;
+  archivedStudents.splice(matchIdx, 1); // no longer "departed" — active again
+  return match.id;
+}
+
+// Actually creates the student and saves. Assumes duplicate-checking and
+// the archive-restore decision have ALREADY been made by the caller — this
+// is the one shared write path used by both the admin's direct "+ Add" and
+// approveStudentRequest(), so both go through identical id-generation and
+// save logic rather than two separately-maintained copies of it.
+async function createStudentInRoster(skey, { name, joiningDate, studentClass, professionType, professionDetail, originOverride, restoredId }) {
+  const profession = isProfessionSection(skey);
+  const newStudent = { name, joiningDate, id: restoredId || await generateStudentId(joiningDate, originOverride || programFor(skey)) };
+  if(profession){ newStudent.profession = { type: professionType, detail: professionDetail }; }
+  else { newStudent.class = studentClass; }
+  students[skey].push(newStudent);
+  await saveRosterChange({ sections: [skey], archived: restoredId != null });
+  renderSection(skey);
+  return newStudent;
 }
 
 async function confirmAddStudent(){
@@ -2187,64 +2268,51 @@ async function confirmAddStudent(){
   if(!joiningDate){showToast('Select joining date');return;}
 
   if(!addStudentContext.key) return;
+  const skey = addStudentContext.key;
 
-  // Check for duplicate name in ALL sections
-  let duplicateSection = null;
-  Object.keys(students).forEach(sec => {
-    (students[sec] || []).forEach(s => {
-      const sName = (typeof s === 'object' ? s.name : s).trim().toLowerCase();
-      if(sName === name.toLowerCase()) duplicateSection = sec;
-    });
-  });
-
+  const duplicateSection = findDuplicateStudentName(name);
   if(duplicateSection) {
     const secLabel = (SECTIONS[duplicateSection]||{}).label || duplicateSection;
     showToast('❌ "' + name + '" already exists in ' + secLabel + '!');
     document.getElementById('modal-student-name').focus();
     return; // BLOCK — no duplicates allowed
   }
-  
+
+  // Volunteers request; only an admin can actually add a student directly.
+  // The archive-restore decision (does this name match someone who left
+  // before?) also moves to approval time in that case — the admin
+  // reviewing the request is the one with the context to answer that, not
+  // necessarily the volunteer submitting it.
+  if(currentUserRole !== 'admin'){
+    if(!studentAddRequestsCollection){ showToast('Not connected — try again shortly'); return; }
+    try{
+      await studentAddRequestsCollection.add({
+        section: skey, sectionLabel: (SECTIONS[skey]||{}).label || skey,
+        name, joiningDate,
+        class: profession ? null : studentClass,
+        professionType: profession ? professionType : null,
+        professionDetail: profession ? professionDetail : null,
+        originOverride: originOverride || null,
+        status: 'pending',
+        requestedBy: currentUser?currentUser.email:'',
+        requestedByName: currentUserName||'',
+        requestedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      closeAddStudentModal();
+      showToast('✅ Request sent — an admin will review it shortly');
+    }catch(e){
+      showToast('Error sending request: '+e.message);
+    }
+    return;
+  }
+
   setSyncStatus('syncing','Adding student...');
   try{
-    const skey = addStudentContext.key;
-
-    // Check the archived-students registry for a departed person with this
-    // exact name — this replaces the old scheme of scanning records for a
-    // sanitized-name tag. The registry stores real names, sections, and
-    // dates, so the confirmation the person sees is concrete and specific,
-    // and restoring means reusing that exact original permanent ID rather
-    // than re-deriving a guess from the name string.
-    const matchIdx = archivedStudents.findIndex(a =>
-      (a.name||'').trim().toLowerCase() === name.toLowerCase()
-    );
-    let restoredId = null;
-    if(matchIdx !== -1){
-      const match = archivedStudents[matchIdx];
-      const whenLabel = match.archivedAt ? fmtDisplay(match.archivedAt) : 'previously';
-      const secLabel = (SECTIONS[match.section]||{}).label || match.section;
-      const proceedRestore = confirm(
-        'Found a previous student record for "' + name + '"\n' +
-        '(' + (match.reason==='graduated' ? 'graduated from' : 'left') + ' ' + secLabel + ' on ' + whenLabel + ').\n\n' +
-        'If this is the same person rejoining, click OK to restore their attendance history.\n' +
-        'If this is a different person who just happens to share this name, click Cancel to start with a clean record.'
-      );
-      if(proceedRestore){
-        restoredId = match.id;
-        archivedStudents.splice(matchIdx, 1); // no longer "departed" — active again
-      }
-    }
-
-    const newStudent = { name:name, joiningDate:joiningDate, id: restoredId || await generateStudentId(joiningDate, originOverride || programFor(skey)) };
-    if(profession){ newStudent.profession = { type: professionType, detail: professionDetail }; }
-    else { newStudent.class = studentClass; }
-    students[skey].push(newStudent);
-
+    const restoredId = checkArchiveRestore(name);
+    await createStudentInRoster(skey, { name, joiningDate, studentClass, professionType, professionDetail, originOverride, restoredId });
     if(restoredId){
       showToast('✅ ' + name + ' added — previous attendance history restored!');
     }
-
-    await saveRosterChange({ sections: [skey], archived: restoredId !== null });
-    renderSection(skey);
     closeAddStudentModal();
     if(!restoredId) showToast(name+' added');
   }catch(e){
@@ -2519,7 +2587,7 @@ function openEditStudentModal(key, idx) {
     document.getElementById('edit-student-profession-detail').value = p.detail||'';
     document.getElementById('edit-student-class').value = '';
   } else {
-    document.getElementById('edit-student-class').value = typeof student === 'object' ? student.class || '' : '';
+    populateClassOptions(document.getElementById('edit-student-class'), key, typeof student === 'object' ? student.class : '');
     document.getElementById('edit-student-profession-type').value = '';
     document.getElementById('edit-student-profession-detail').value = '';
   }
@@ -2535,6 +2603,14 @@ function toggleEditFieldGroup(key){
   document.getElementById('edit-class-group').style.display = profession ? 'none' : 'block';
   document.getElementById('edit-profession-group').style.display = profession ? 'block' : 'none';
   document.getElementById('edit-student-name-label').textContent = nameFieldLabel(key)+' *';
+  if(!profession){
+    // Re-populate for the newly selected section — e.g. moving someone
+    // from Middle to High School should offer Class 8-10, not 4-7. Keep
+    // their current selection if it's still valid for the new range,
+    // otherwise clear it rather than silently keeping an out-of-range value.
+    const classSelect = document.getElementById('edit-student-class');
+    populateClassOptions(classSelect, key, classSelect.value);
+  }
 }
 function onEditSectionChange(){
   toggleEditFieldGroup(document.getElementById('edit-student-section').value);
@@ -3060,60 +3136,105 @@ async function runClassPromotion(auto = false) {
     return;
   }
 
-  // Collect all Class 10 students (will graduate)
-  const graduated = [];
   const SECTION_KEYS = ['old-middle', 'old-high', 'new-middle', 'new-high'];
 
+  // Flatten every Balaka Sangha student across all 4 sections into one
+  // list first. This is what makes it possible to move someone between
+  // Middle/High and New/Old in the SAME step — e.g. a "new-middle" Class 7
+  // student completing one year becomes an "old-high" Class 8 student in
+  // one promotion, not a class-increment followed by a separate manual
+  // section move. Middle School = Class 4-7, High School = Class 8-10 —
+  // whichever range the INCREMENTED class falls into determines the
+  // destination, regardless of which section they started in.
+  //
+  // The New→Old side is simpler than it might look: ANY student who
+  // survives one full annual promotion cycle becomes "old" this same
+  // cycle, whether they were "new" or already "old" going in — so the
+  // destination section is always "old-middle" or "old-high", never
+  // "new-*". "new-*" only ever gets repopulated by fresh additions made
+  // after this point, until the cycle repeats next year.
+  const allEntries = [];
   SECTION_KEYS.forEach(key => {
-    if(!students[key]) return;
-    students[key].forEach(s => {
-      const studentClass = typeof s === 'object' ? parseInt(s.class) : 0;
-      if(studentClass === 10) {
-        graduated.push({
-          name: typeof s === 'object' ? s.name : s,
-          section: key,
-          id: typeof s === 'object' ? s.id : null,
-          joiningDate: typeof s === 'object' ? s.joiningDate : ''
-        });
-      }
-    });
+    (students[key] || []).forEach(s => allEntries.push({ student: s, fromSection: key }));
   });
 
-  // Confirm dialog (skip if auto)
+  const graduated = [];
+  const survivors = []; // { student, fromSection, toSection }
+
+  allEntries.forEach(({ student: s, fromSection }) => {
+    if(typeof s !== 'object'){
+      // legacy string-only entry (no class field to reason about) —
+      // carried over as-is, in its current section, unchanged.
+      survivors.push({ student: s, fromSection, toSection: fromSection });
+      return;
+    }
+    const oldClass = parseInt(s.class);
+    if(oldClass === 10){
+      graduated.push({ name: s.name, section: fromSection, id: s.id, joiningDate: s.joiningDate });
+      return;
+    }
+    const newClass = oldClass + 1;
+    const toSection = 'old-' + (newClass <= 7 ? 'middle' : 'high');
+    survivors.push({ student: { ...s, class: String(newClass) }, fromSection, toSection });
+  });
+
+  // Anyone whose section is actually changing — used both for the
+  // confirmation message (so an admin sees this before it happens, not
+  // after) and for migrating their existing attendance records afterward.
+  const crossovers = survivors.filter(x => x.fromSection !== x.toSection);
+
   if(!auto) {
     const graduateNames = graduated.map(g => g.name).join(', ') || 'None';
-    const msg = `This will promote ALL students up one class.
-
-` +
-      `🎓 Class 10 students who will GRADUATE (removed):
-${graduateNames || 'None'}
-
-` +
-      `All other students move up one class (5→6, 6→7 ... 9→10).
-
-Proceed?`;
+    const crossoverLines = crossovers.length
+      ? crossovers.map(x => `${typeof x.student==='object'?x.student.name:x.student}: ${x.fromSection.replace('-',' ')} → ${x.toSection.replace('-',' ')}`).join('\n')
+      : 'None';
+    const msg = `This will promote ALL students up one class.\n\n` +
+      `🎓 Class 10 students who will GRADUATE (removed):\n${graduateNames}\n\n` +
+      `↔️ Students moving between New/Old and/or Middle/High:\n${crossoverLines}\n\n` +
+      `Everyone else moves up one class within their current section.\n\nProceed?`;
     if(!confirm(msg)) return;
   }
 
   setSyncStatus('syncing', 'Promoting classes...');
 
   try {
+    // Redistribute survivors into their correct destination sections.
+    const newSectionArrays = { 'old-middle': [], 'old-high': [], 'new-middle': [], 'new-high': [] };
+    survivors.forEach(({ student, toSection }) => newSectionArrays[toSection].push(student));
+    SECTION_KEYS.forEach(key => { students[key] = newSectionArrays[key]; });
+
+    // Migrate attendance records for anyone whose section actually changed
+    // — otherwise their history would still be filed under their OLD
+    // section prefix while they're now rendered under a different one.
+    // NOTE (same limitation as confirmEditStudent's section-move logic):
+    // this only finds records currently sitting in the live in-memory
+    // window (current + previous year). Anything older is not re-keyed by
+    // this step — it isn't lost (still reachable by the History modal's
+    // on-demand fetch, which matches by student ID regardless of section),
+    // but it would still be filed under the old section prefix rather than
+    // the new one if ever queried that way directly.
+    const moveEntries = [];
+    crossovers.forEach(({ student, fromSection, toSection }) => {
+      if(typeof student !== 'object' || !student.id) return;
+      Object.keys(records).forEach(k => {
+        const parts = k.split('|');
+        if(parts[0] === fromSection && parts[2] === student.id){
+          const rest = parts.slice(1).join('|');
+          const newKey = toSection + '|' + rest;
+          records[newKey] = records[k];
+          delete records[k];
+          moveEntries.push({key: newKey, value: records[newKey]});
+          moveEntries.push({key: k, value: null});
+        }
+      });
+    });
+    if(moveEntries.length) await writeRecordKeysBatch(moveEntries);
+
     // Records are keyed by each student's permanent id, not their array
     // position, so promoting or graduating students never requires
     // rebuilding anyone's attendance history — a survivor's records stay
     // attached to them automatically no matter how the roster array
     // shifts underneath them.
-    SECTION_KEYS.forEach(key => {
-      if(!students[key]) return;
-      students[key] = students[key]
-        .map(s => {
-          if(typeof s !== 'object') return s; // legacy string-only entry, carried over as-is
-          const cls = parseInt(s.class);
-          if(cls === 10) return null; // graduates — removed below
-          return { ...s, class: String(cls + 1) };
-        })
-        .filter(Boolean);
-    });
 
     // Register graduates in the same archived-students list that "removed
     // & keep records" uses, so if a promotion turns out to have been a
@@ -3322,14 +3443,15 @@ function handleBulkFile(event) {
           const cls = r.class.replace('Class ', '').replace('class ', '').trim();
           const clsNum = parseInt(cls);
           const joining = r.joiningDate || today;
+          const validRange = CLASS_RANGES[schoolLevelForKey(key)] || [4,5,6,7,8,9,10];
 
           let status = '✅ Valid';
           let valid = true;
 
           if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
-          else if (clsNum < 5 || clsNum > 10 || isNaN(clsNum)) { 
-            status = '⚠️ Class must be 5-10'; valid = false; 
-            errors.push(`Row ${rowNum}: Invalid class "${cls}"`); 
+          else if (isNaN(clsNum) || !validRange.includes(clsNum)) {
+            status = `⚠️ Class must be ${validRange[0]}-${validRange[validRange.length-1]}`; valid = false;
+            errors.push(`Row ${rowNum}: Invalid class "${cls}" for this section (must be ${validRange[0]}-${validRange[validRange.length-1]})`);
           }
 
           previewRows.push({ name, secondary: cls ? 'Class '+cls : '—', joining, status, valid });
@@ -3644,12 +3766,63 @@ async function clearLegacyRecordsField(){
   }
 }
 
+let allMyStudentRequests = []; // volunteer's own student-add requests, any status — for the Corrections tab tracking view
+function initMyStudentRequestsListener(){
+  if(!db || !studentAddRequestsCollection || currentUserRole==='admin') return; // admins review these in the Approvals tab instead
+  const myEmail = currentUser ? currentUser.email : '';
+  studentAddRequestsCollection.where('requestedBy','==', myEmail).onSnapshot(snap=>{
+    allMyStudentRequests = snap.docs.map(d=>Object.assign({id:d.id}, d.data()));
+    // No .orderBy() in the query — same composite-index avoidance as the
+    // corrections listener below. Sort client-side instead.
+    allMyStudentRequests.sort((a,b)=>{
+      const ta = a.requestedAt && a.requestedAt.toMillis ? a.requestedAt.toMillis() : 0;
+      const tb = b.requestedAt && b.requestedAt.toMillis ? b.requestedAt.toMillis() : 0;
+      return tb - ta;
+    });
+    if(curView==='corrections') renderCorrections();
+  }, err=>console.warn('[MyStudentRequests] listener error', err));
+}
+
 // Live listener for correction requests — keeps the badge count and the
 // Corrections tab in sync across all signed-in devices.
+//
+// IMPORTANT: the query itself must match what the Firestore security rule
+// allows a non-admin to read. The rule only lets a volunteer read documents
+// where requestedBy == their own email — but this listener used to run one
+// single unfiltered orderBy() query for everyone. Firestore doesn't quietly
+// filter an unconstrained query down to "just what you're allowed to see";
+// if the query COULD return documents the rule wouldn't allow, it rejects
+// the entire query. For an admin (whom the rule allows to read everything)
+// that succeeded; for every volunteer it silently failed in full — logged
+// to console, invisible to the person actually using the app — which is
+// exactly why a volunteer's own correction request, visible fine to an
+// admin, showed as "no such correction" in their own view. The fix is to
+// scope the query itself to match the rule for non-admins.
 function initCorrectionsListener(){
   if(!correctionsCollection) return;
-  correctionsCollection.orderBy('requestedAt','desc').onSnapshot(snap=>{
+  const isAdmin = currentUserRole === 'admin';
+  const myEmail = currentUser ? currentUser.email : '';
+  // Volunteer path deliberately has NO .orderBy() here — combining a
+  // .where() filter with .orderBy() on a different field requires a
+  // Firestore composite index that doesn't exist for this collection, and
+  // creating one is an easy-to-miss manual step in Firebase Console. A
+  // volunteer's own request count is always small, so sorting client-side
+  // below is simpler and needs no index at all. The admin path keeps its
+  // .orderBy() since a single-field sort with no .where() needs no
+  // composite index — Firestore indexes every field individually by
+  // default.
+  const query = isAdmin
+    ? correctionsCollection.orderBy('requestedAt','desc')
+    : correctionsCollection.where('requestedBy','==', myEmail);
+  query.onSnapshot(snap=>{
     allCorrections = snap.docs.map(d=>Object.assign({id:d.id}, d.data()));
+    if(!isAdmin){
+      allCorrections.sort((a,b)=>{
+        const ta = a.requestedAt && a.requestedAt.toMillis ? a.requestedAt.toMillis() : 0;
+        const tb = b.requestedAt && b.requestedAt.toMillis ? b.requestedAt.toMillis() : 0;
+        return tb - ta;
+      });
+    }
     const pendingCount = allCorrections.filter(c=>c.status==='pending').length;
     const badge = document.getElementById('corrections-badge');
     if(badge){
@@ -3662,6 +3835,17 @@ function initCorrectionsListener(){
 
 // ---------- §1.3/§4 fix: new-account approvals ----------
 let allPendingUsers = [];
+let allPendingStudentRequests = [];
+
+// Shared badge for the Approvals tab — combines pending accounts AND
+// pending student requests into one count, since both live in that tab.
+function updateApprovalsBadge(){
+  const badge = document.getElementById('approvals-badge');
+  if(!badge) return;
+  const total = allPendingUsers.length + allPendingStudentRequests.length;
+  if(total>0){ badge.textContent=total; badge.style.display='inline-block'; }
+  else { badge.style.display='none'; }
+}
 
 // Admin-only — keeps the Approvals badge and tab live. Only called from
 // showApp() when currentUserRole==='admin', so volunteers never run this
@@ -3670,13 +3854,22 @@ function initPendingUsersListener(){
   if(!db || currentUserRole!=='admin') return;
   db.collection('users').where('status','==','pending').onSnapshot(snap=>{
     allPendingUsers = snap.docs.map(d=>Object.assign({id:d.id}, d.data()));
-    const badge = document.getElementById('approvals-badge');
-    if(badge){
-      if(allPendingUsers.length>0){ badge.textContent=allPendingUsers.length; badge.style.display='inline-block'; }
-      else { badge.style.display='none'; }
-    }
+    updateApprovalsBadge();
     if(curView==='approvals') renderApprovals();
   }, err=>console.warn('[Approvals] listener error', err));
+}
+
+// Admin-only — pending requests from volunteers asking for a student to be
+// added. A volunteer marking attendance can spot someone missing from the
+// list and ask for them to be added, without being able to add them
+// directly — an admin reviews and decides (see approveStudentRequest).
+function initStudentRequestsListener(){
+  if(!db || !studentAddRequestsCollection || currentUserRole!=='admin') return;
+  studentAddRequestsCollection.where('status','==','pending').onSnapshot(snap=>{
+    allPendingStudentRequests = snap.docs.map(d=>Object.assign({id:d.id}, d.data()));
+    updateApprovalsBadge();
+    if(curView==='approvals') renderApprovals();
+  }, err=>console.warn('[StudentRequests] listener error', err));
 }
 
 function renderApprovals(){
@@ -3689,24 +3882,102 @@ function renderApprovals(){
     return;
   }
   if(promoBox) promoBox.style.display = 'block';
+
+  let html = '<h3 style="margin:6px 0 14px">🧑‍🎓 Pending Student Requests</h3>';
+  if(!allPendingStudentRequests.length){
+    html += '<div class="empty-state" style="margin-bottom:22px">No pending student requests right now.</div>';
+  } else {
+    html += allPendingStudentRequests.map(r=>{
+      const when = (r.requestedAt && r.requestedAt.toDate) ? r.requestedAt.toDate().toLocaleString() : '';
+      const detail = r.class ? 'Class '+escapeHtml(r.class) : (r.professionType ? escapeHtml(r.professionType)+': '+escapeHtml(r.professionDetail||'') : '');
+      return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:700">${escapeHtml(r.name)}</div>
+          <div style="font-size:12.5px;color:var(--text2)">${escapeHtml(r.sectionLabel||r.section)} · ${detail}</div>
+          <div style="font-size:11px;color:var(--text4);margin-top:4px">Requested by ${escapeHtml(r.requestedByName||r.requestedBy)}${when?' · '+when:''}</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button onclick="approveStudentRequest('${r.id}')" style="background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">✓ Approve</button>
+          <button onclick="rejectStudentRequest('${r.id}')" style="background:#C0392B;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">✕ Reject</button>
+        </div>
+      </div>`;
+    }).join('') + '<div style="margin-bottom:22px"></div>';
+  }
+
+  html += '<h3 style="margin:6px 0 14px">👤 Pending Account Approvals</h3>';
   if(!allPendingUsers.length){
-    el.innerHTML = '<div class="empty-state">No pending account requests right now.</div>';
+    html += '<div class="empty-state">No pending account requests right now.</div>';
+  } else {
+    html += allPendingUsers.map(u=>{
+      const when = (u.createdAt && u.createdAt.toDate) ? u.createdAt.toDate().toLocaleString() : '';
+      return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:700">${escapeHtml(u.name)||'(no name)'}</div>
+          <div style="font-size:12.5px;color:var(--text2)">${escapeHtml(u.email)}</div>
+          ${when?`<div style="font-size:11px;color:var(--text4);margin-top:4px">Requested ${when}</div>`:''}
+        </div>
+        <div style="display:flex;gap:8px">
+          <button onclick="approveUserAccount('${u.id}')" style="background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">✓ Approve</button>
+          <button onclick="rejectUserAccount('${u.id}')" style="background:#C0392B;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">✕ Reject</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  el.innerHTML = html;
+}
+
+async function approveStudentRequest(requestId){
+  if(currentUserRole!=='admin') return;
+  const r = allPendingStudentRequests.find(x=>x.id===requestId);
+  if(!r) return;
+
+  // Re-check for a duplicate now, in case someone else already added this
+  // exact name between when the request was submitted and now.
+  const duplicateSection = findDuplicateStudentName(r.name);
+  if(duplicateSection){
+    const secLabel = (SECTIONS[duplicateSection]||{}).label || duplicateSection;
+    showToast('❌ "'+r.name+'" already exists in '+secLabel+' — reject this request or ask the volunteer to check');
     return;
   }
-  el.innerHTML = '<h3 style="margin:6px 0 14px">👤 Pending Account Approvals</h3>' + allPendingUsers.map(u=>{
-    const when = (u.createdAt && u.createdAt.toDate) ? u.createdAt.toDate().toLocaleString() : '';
-    return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <div>
-        <div style="font-weight:700">${escapeHtml(u.name)||'(no name)'}</div>
-        <div style="font-size:12.5px;color:var(--text2)">${escapeHtml(u.email)}</div>
-        ${when?`<div style="font-size:11px;color:var(--text4);margin-top:4px">Requested ${when}</div>`:''}
-      </div>
-      <div style="display:flex;gap:8px">
-        <button onclick="approveUserAccount('${u.id}')" style="background:#1D9E75;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">✓ Approve</button>
-        <button onclick="rejectUserAccount('${u.id}')" style="background:#C0392B;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer">✕ Reject</button>
-      </div>
-    </div>`;
-  }).join('');
+
+  // The archive-restore decision belongs here, at approval time, not at
+  // request time — the admin reviewing has the context to know whether
+  // this is genuinely the same returning person.
+  const restoredId = checkArchiveRestore(r.name);
+
+  if(!confirm('Approve adding "'+r.name+'" to '+(r.sectionLabel||r.section)+'?')) return;
+
+  try{
+    await createStudentInRoster(r.section, {
+      name: r.name, joiningDate: r.joiningDate,
+      studentClass: r.class, professionType: r.professionType, professionDetail: r.professionDetail,
+      originOverride: r.originOverride, restoredId
+    });
+    await studentAddRequestsCollection.doc(requestId).update({
+      status: 'approved',
+      reviewedBy: currentUser?currentUser.email:'',
+      reviewedByName: currentUserName||'',
+      reviewedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast('✅ '+r.name+' added to '+(r.sectionLabel||r.section)+(restoredId?' — previous history restored!':''));
+  }catch(e){ showToast('Error: '+e.message); }
+}
+
+async function rejectStudentRequest(requestId){
+  if(currentUserRole!=='admin') return;
+  const r = allPendingStudentRequests.find(x=>x.id===requestId);
+  if(!r) return;
+  if(!confirm('Reject the request to add "'+r.name+'"?')) return;
+  try{
+    await studentAddRequestsCollection.doc(requestId).update({
+      status: 'rejected',
+      reviewedBy: currentUser?currentUser.email:'',
+      reviewedByName: currentUserName||'',
+      reviewedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    showToast('Request rejected');
+  }catch(e){ showToast('Error: '+e.message); }
 }
 
 async function approveUserAccount(uid){
@@ -3801,14 +4072,43 @@ function renderCorrections(){
   const myEmail = currentUser?currentUser.email:'';
   const list = isAdmin ? allCorrections : allCorrections.filter(c=>c.requestedBy===myEmail);
 
+  let html = '';
+
+  // Volunteers get a second section here tracking their own student-add
+  // requests — admins already see and act on these in the Approvals tab,
+  // so this is read-only status tracking for the person who submitted it.
+  if(!isAdmin){
+    html += '<h3 style="margin:6px 0 14px">🧑‍🎓 My Student Requests</h3>';
+    if(!allMyStudentRequests.length){
+      html += '<div class="empty-state" style="margin-bottom:22px">You haven\u2019t requested any students be added yet.</div>';
+    } else {
+      html += allMyStudentRequests.map(r=>{
+        const statusColor = r.status==='pending' ? '#856404' : r.status==='approved' ? '#1D9E75' : '#C0392B';
+        const statusBg    = r.status==='pending' ? '#FFF3CD' : r.status==='approved' ? '#E3F6EE' : '#FBEAEA';
+        const detail = r.class ? 'Class '+escapeHtml(r.class) : (r.professionType ? escapeHtml(r.professionType)+': '+escapeHtml(r.professionDetail||'') : '');
+        return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:700">${escapeHtml(r.name)}</div>
+            <div style="font-size:12px;color:var(--text3)">${escapeHtml(r.sectionLabel||r.section)} · ${detail}</div>
+            ${r.reviewedByName ? `<div style="font-size:11px;color:var(--text4);margin-top:6px">Reviewed by ${escapeHtml(r.reviewedByName)}</div>` : ''}
+          </div>
+          <span style="background:${statusBg};color:${statusColor};font-weight:700;font-size:11px;padding:3px 10px;border-radius:10px;white-space:nowrap">${r.status.toUpperCase()}</span>
+        </div>`;
+      }).join('') + '<div style="margin-bottom:22px"></div>';
+    }
+  }
+
+  html += '<h3 style="margin:6px 0 14px">'+(isAdmin?'🔄 Correction Requests':'🔄 My Correction Requests')+'</h3>';
+
   if(!list.length){
-    el.innerHTML = '<div class="empty-state">'+(isAdmin?'No correction requests yet.':'You haven\u2019t submitted any correction requests yet.')+'</div>';
+    html += '<div class="empty-state">'+(isAdmin?'No correction requests yet.':'You haven\u2019t submitted any correction requests yet.')+'</div>';
+    el.innerHTML = html;
     return;
   }
 
   const fmtVal = v => v==='P' ? 'Present' : v==='A' ? 'Absent' : 'Not marked';
 
-  el.innerHTML = '<h3 style="margin:6px 0 14px">'+(isAdmin?'🔄 Correction Requests':'🔄 My Correction Requests')+'</h3>' + list.map(c=>{
+  html += list.map(c=>{
     const statusColor = c.status==='pending' ? '#856404' : c.status==='approved' ? '#1D9E75' : '#C0392B';
     const statusBg    = c.status==='pending' ? '#FFF3CD' : c.status==='approved' ? '#E3F6EE' : '#FBEAEA';
     return `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:10px">
@@ -3831,6 +4131,8 @@ function renderCorrections(){
       </div>
     </div>`;
   }).join('');
+
+  el.innerHTML = html;
 }
 
 async function approveCorrection(id){
