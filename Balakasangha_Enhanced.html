@@ -1496,7 +1496,10 @@ async function loadUserRole(user){
         if(userDoc.exists && userDoc.data().status){
           status = userDoc.data().status;
         }
-      }catch(e3){ /* fall through with default 'approved' */ }
+      }catch(e3){
+        console.warn('[Auth] could not fetch user profile doc', e3);
+        status = 'pending';
+      }
       currentUserStatus = status;
       currentUserRole = (status === 'pending' || status === 'rejected') ? 'pending' : 'volunteer';
     }
@@ -1539,7 +1542,11 @@ async function saveState(){
   setSyncStatus('syncing','Saving...');
   try{
     if(stateDoc){
-      await stateDoc.set({students, locks, archivedStudents});
+      const payload = {students, locks, archivedStudents};
+      if(legacyRecordsField && Object.keys(legacyRecordsField).length){
+        payload.records = legacyRecordsField;
+      }
+      await stateDoc.set(payload);
       setPendingSync(false);
       setSyncStatus('synced','Saved to Firebase ✓');
     } else {
@@ -2129,7 +2136,7 @@ function renderSection(key){
       ? `<span title="${s.consAbsent} Sundays absent in a row" style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;background:var(--amber-light);color:var(--amber-dark);font-weight:700;margin-left:5px;vertical-align:middle">⚡ ${s.consAbsent} ABSENT</span>`
       : '';
 
-    html+=`<tr data-name="${escapeHtml(name.toLowerCase())}" data-rec="${rec||'U'}">
+    html+=`<tr data-idx="${i}" data-name="${escapeHtml(name.toLowerCase())}" data-rec="${rec||'U'}">
       <td class="col-num" style="color:var(--text4)">${displayPos}</td>
       <td class="col-name"><span style="font-weight:600">${escapeHtml(name)}</span>${atRiskBadge}${consAbsBadge}<br><span style="font-size:9.5px;color:var(--text4);letter-spacing:.3px">${escapeHtml(idFor(key,i))}</span></td>
       <td class="col-class" style="font-size:11px;color:var(--text2)">${escapeHtml(studentClass)}</td>
@@ -2904,12 +2911,12 @@ function jumpToStudent(key, idx){
   setTimeout(()=>{
     const tbody = document.getElementById('tbody-'+key);
     if(!tbody) return;
-    const rows = tbody.querySelectorAll('tr');
-    if(rows[idx]){
-      rows[idx].scrollIntoView({behavior:'smooth', block:'center'});
-      rows[idx].style.transition='background .3s';
-      rows[idx].style.background='var(--blue-light)';
-      setTimeout(()=>{ rows[idx].style.background=''; },2000);
+    const targetRow = tbody.querySelector(`tr[data-idx="${idx}"]`);
+    if(targetRow){
+      targetRow.scrollIntoView({behavior:'smooth', block:'center'});
+      targetRow.style.transition='background .3s';
+      targetRow.style.background='var(--blue-light)';
+      setTimeout(()=>{ targetRow.style.background=''; },2000);
     }
   }, 150);
 }
