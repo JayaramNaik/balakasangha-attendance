@@ -3221,6 +3221,21 @@ async function runClassPromotion(auto = false) {
       `↔️ Students moving between New/Old and/or Middle/High:\n${crossoverLines}\n\n` +
       `Everyone else moves up one class within their current section.\n\nProceed?`;
     if(!confirm(msg)) return;
+
+    // Manual runs need the SAME atomic claim the automatic June trigger
+    // uses (see checkYearEndPromotion/claimYearPromotion above) — without
+    // this, two admins both clicking "Promote Now" within moments of each
+    // other would both pass this confirm dialog and both run the full
+    // promotion, silently double-promoting everyone (e.g. class 6→8
+    // instead of 6→7). Checked AFTER confirm, not before: claiming marks
+    // the year as done immediately, so claiming before the admin has even
+    // decided to proceed would permanently burn this year's promotion if
+    // they then hit Cancel.
+    const won = await claimYearPromotion(new Date().getFullYear());
+    if(!won) {
+      showToast('⚠️ Classes were already promoted this year (possibly by another admin just now) — nothing done.');
+      return;
+    }
   }
 
   setSyncStatus('syncing', 'Promoting classes...');
@@ -3278,11 +3293,12 @@ async function runClassPromotion(auto = false) {
     });
 
     await saveRosterChange({ sections: SECTION_KEYS, archived: true });
-    // Mark this year as done in the SHARED record (not just for auto-runs —
-    // a manual "Promote Now" click needs to claim the year too, or a later
-    // automatic check-in from a different admin would see it as
-    // unclaimed and silently re-run it).
-    await db.doc(PROMOTION_STATUS_DOC_PATH).set({ lastPromotedYear: new Date().getFullYear() }, { merge: true });
+    // NOTE: no separate "mark year as done" write needed here anymore —
+    // both the auto path (claimed in checkYearEndPromotion) and the manual
+    // path (claimed just above, right after confirm) already recorded the
+    // claim atomically BEFORE any of this work started, which is what
+    // actually protects against double-runs. Writing it again here would
+    // just be redundant, not additionally protective.
 
     // Hide banner
     document.getElementById('upgrade-banner').style.display = 'none';
