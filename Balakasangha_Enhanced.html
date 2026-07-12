@@ -528,6 +528,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Name</th>
                 <th id="bulk-secondary-col-header" style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Class</th>
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Joining Date</th>
+                <th id="bulk-origin-col-header" style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);display:none">Joined Via</th>
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Status</th>
               </tr>
             </thead>
@@ -3317,9 +3318,12 @@ function openBulkImport(key) {
   const profession = isProfessionSection(key);
   document.getElementById('bulk-import-title').textContent = profession ? '📥 Bulk Import Volunteers' : '📥 Bulk Import Students';
   document.getElementById('bulk-columns-hint').textContent = profession
-    ? 'Columns: Name, Type (Profession/Education), Detail, Joining Date'
+    ? 'Columns: Name, Type (Profession/Education), Detail, Joining Date, Joined Via (Directly / VBS — optional, defaults to Directly)'
     : 'Columns: Name, Class, Joining Date';
   document.getElementById('bulk-secondary-col-header').textContent = secondaryFieldLabel(key);
+  // "Joined Via" only applies to Yuvaka Sangha imports — same reasoning as
+  // the single-add modal's add-origin-group (see openAddStudentModal).
+  document.getElementById('bulk-origin-col-header').style.display = profession ? 'table-cell' : 'none';
   document.getElementById('bulk-import-overlay').style.display = 'flex';
   document.getElementById('bulk-preview').style.display = 'none';
   document.getElementById('bulk-confirm-btn').style.display = 'none';
@@ -3337,11 +3341,11 @@ function downloadTemplate() {
   const wb = XLSX.utils.book_new();
   if(profession){
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Name', 'Type', 'Detail', 'Joining Date'],
-      ['Ramesh Rao', 'Profession', 'Software Engineer', '22-06-2026'],
-      ['Anjali Bhat', 'Education', 'B.Com 2nd Year', '22-06-2026'],
+      ['Name', 'Type', 'Detail', 'Joining Date', 'Joined Via'],
+      ['Ramesh Rao', 'Profession', 'Software Engineer', '22-06-2026', 'Directly'],
+      ['Anjali Bhat', 'Education', 'B.Com 2nd Year', '22-06-2026', 'VBS'],
     ]);
-    ws['!cols'] = [{wch:25},{wch:12},{wch:22},{wch:15}];
+    ws['!cols'] = [{wch:25},{wch:12},{wch:22},{wch:15},{wch:12}];
     XLSX.utils.book_append_sheet(wb, ws, 'Volunteers');
     XLSX.writeFile(wb, 'YuvakaSangha_Volunteer_Template.xlsx');
   } else {
@@ -3410,7 +3414,7 @@ function handleBulkFile(event) {
         rows = lines.slice(1).map(line => {
           const vals = parseCSVLine(line);
           if(profession){
-            return { name: vals[0]||'', type: vals[1]||'', detail: vals[2]||'', joiningDate: parseDate(vals[3]) };
+            return { name: vals[0]||'', type: vals[1]||'', detail: vals[2]||'', joiningDate: parseDate(vals[3]), joinedVia: vals[4]||'' };
           }
           return { name: vals[0]||'', class: vals[1]||'', joiningDate: parseDate(vals[2]) };
         });
@@ -3427,7 +3431,8 @@ function handleBulkFile(event) {
               name,
               type: (r['Type'] || r['type'] || '').toString().trim(),
               detail: (r['Detail'] || r['detail'] || '').toString().trim(),
-              joiningDate: parseDate(r['Joining Date'] || r['joining date'] || r['JoiningDate'])
+              joiningDate: parseDate(r['Joining Date'] || r['joining date'] || r['JoiningDate']),
+              joinedVia: (r['Joined Via'] || r['joined via'] || r['JoinedVia'] || '').toString().trim()
             };
           }
           return {
@@ -3444,6 +3449,22 @@ function handleBulkFile(event) {
       const errors = [];
 
       if(profession){
+        // "Joined Via" mirrors the single-add modal's origin dropdown (see
+        // openAddStudentModal / add-origin-group) — it only affects which
+        // id prefix/counter the student draws from (R53VYS vs R53VBS), it's
+        // never stored on the student record itself. Blank/unrecognized
+        // values default to "Directly", matching the modal's own default.
+        const parseJoinedVia = (raw) => {
+          const v = (raw||'').trim().toLowerCase();
+          if(!v) return { origin: 'yuvaka', label: 'Directly' };
+          if(v==='vbs' || v==='balaka' || v==='via vbs' || v==='balaka sangha' || v.startsWith('grew up')) {
+            return { origin: 'balaka', label: 'Via VBS' };
+          }
+          if(v==='direct' || v==='directly' || v==='yuvaka' || v==='new') {
+            return { origin: 'yuvaka', label: 'Directly' };
+          }
+          return { origin: null, label: raw }; // unrecognized — flagged below
+        };
         rows.forEach((r, i) => {
           const rowNum = i + 2;
           const name = r.name;
@@ -3451,6 +3472,7 @@ function handleBulkFile(event) {
           const type = rawType==='profession' ? 'Profession' : rawType==='education' ? 'Education' : '';
           const detail = r.detail;
           const joining = r.joiningDate || fmtDate(new Date());
+          const joinedVia = parseJoinedVia(r.joinedVia);
 
           let status = '✅ Valid';
           let valid = true;
@@ -3458,9 +3480,10 @@ function handleBulkFile(event) {
           if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
           else if (!type) { status = '⚠️ Type must be Profession or Education'; valid = false; errors.push(`Row ${rowNum}: Invalid type "${r.type}"`); }
           else if (!detail) { status = '⚠️ Detail is required'; valid = false; errors.push(`Row ${rowNum}: Missing detail`); }
+          else if (joinedVia.origin === null) { status = '⚠️ Joined Via must be Directly or VBS'; valid = false; errors.push(`Row ${rowNum}: Invalid "Joined Via" value "${r.joinedVia}"`); }
 
-          previewRows.push({ name, secondary: valid ? type+': '+detail : (r.type||'—'), joining, status, valid });
-          if (valid) validStudents.push({ name, profession: { type, detail }, joiningDate: joining });
+          previewRows.push({ name, secondary: valid ? type+': '+detail : (r.type||'—'), joining, origin: joinedVia.label, status, valid });
+          if (valid) validStudents.push({ name, profession: { type, detail }, joiningDate: joining, originOverride: joinedVia.origin });
         });
       } else {
         const today = fmtDate(new Date());
@@ -3495,6 +3518,7 @@ function handleBulkFile(event) {
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-weight:500;color:var(--text)">${escapeHtml(r.name)||'—'}</td>
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${escapeHtml(r.secondary)||'—'}</td>
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${escapeHtml(r.joining)||'—'}</td>
+          ${profession ? `<td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${escapeHtml(r.origin)||'—'}</td>` : ''}
           <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${r.status}</td>
         </tr>
       `).join('');
@@ -3547,7 +3571,13 @@ async function confirmBulkImport() {
     // student's leftover records just by landing at the same array index —
     // each one gets its own brand-new id below.
     for(const s of newStudents){
-      s.id = await generateStudentId(s.joiningDate, programFor(key));
+      // originOverride (set per-row from the "Joined Via" column for Yuvaka
+      // Sangha imports) picks the id prefix/counter exactly like the single
+      // -add modal's origin dropdown does — see confirmAddStudent. It's
+      // transient: used only to pick the prefix, then discarded so it never
+      // ends up stored on the student record itself.
+      s.id = await generateStudentId(s.joiningDate, s.originOverride || programFor(key));
+      delete s.originOverride;
       students[key].push(s);
     }
 
