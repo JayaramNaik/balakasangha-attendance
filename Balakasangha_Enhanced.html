@@ -3564,14 +3564,43 @@ function handleBulkFile(event) {
     try {
       let rows = [];
 
+      // Robust date parser for bulk import. Accepts the app's established
+      // day-first convention (DD-MM-YYYY OR DD/MM/YYYY, 1- or 2-digit day
+      // /month) as well as already-ISO YYYY-MM-DD — spreadsheet software
+      // often reformats a typed date in ways that don't match one single
+      // rigid pattern (typing "22-06-2025" into Excel can come back out as
+      // "6/22/2025" once the cell becomes a real date value, depending on
+      // the sheet's locale/number format). Returns '' for a genuinely BLANK
+      // cell (caller defaults that to today — a reasonable assumption for
+      // missing data) but null for anything NON-blank it can't confidently
+      // parse — the caller must treat that as an ERROR, not guess. This is
+      // the actual fix for the reported bug: previously an unrecognized
+      // format fell through as the raw, un-reformatted string, which
+      // studentIdYearPart() then couldn't read a valid year out of either,
+      // and silently substituted the CURRENT year in the id — with nothing
+      // in the preview showing anything had gone wrong.
       const parseDate = (raw) => {
         raw = (raw||'').toString().trim();
-        if(!raw) return fmtDate(new Date());
-        if(raw.match(/^\d{2}-\d{2}-\d{4}$/)){
-          const [d,m,y] = raw.split('-');
-          return y+'-'+m+'-'+d;
+        if(!raw) return '';
+        let m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); // YYYY-MM-DD
+        if(m){
+          const mo = parseInt(m[2],10), d = parseInt(m[3],10);
+          if(mo>=1 && mo<=12 && d>=1 && d<=31) return m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');
+          return null;
         }
-        return raw; // already YYYY-MM-DD
+        m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/); // DD-MM-YYYY or DD/MM/YYYY
+        if(m){
+          const d = parseInt(m[1],10), mo = parseInt(m[2],10);
+          // Only accept the day-first reading if it's actually a valid date
+          // that way (month 1-12, day 1-31) — e.g. Excel's US-locale
+          // reformat of a date can come out as "6/22/2025", which is NOT a
+          // valid day-first date (22 can't be a month), so this correctly
+          // falls through to null (flagged as an error) instead of
+          // silently accepting a nonsense month.
+          if(mo>=1 && mo<=12 && d>=1 && d<=31) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+          return null;
+        }
+        return null; // unrecognized shape — flagged as an error downstream, never guessed
       };
 
       if (file.name.endsWith('.csv')) {
@@ -3604,9 +3633,9 @@ function handleBulkFile(event) {
         rows = lines.slice(1).map(line => {
           const vals = parseCSVLine(line);
           if(profession){
-            return { name: vals[0]||'', type: vals[1]||'', detail: vals[2]||'', joiningDate: parseDate(vals[3]), joinedVia: vals[4]||'' };
+            return { name: vals[0]||'', type: vals[1]||'', detail: vals[2]||'', joiningDateRaw: (vals[3]||'').trim(), joiningDate: parseDate(vals[3]), joinedVia: vals[4]||'' };
           }
-          return { name: vals[0]||'', class: vals[1]||'', joiningDate: parseDate(vals[2]) };
+          return { name: vals[0]||'', class: vals[1]||'', joiningDateRaw: (vals[2]||'').trim(), joiningDate: parseDate(vals[2]) };
         });
       } else {
         // Parse Excel
@@ -3616,19 +3645,22 @@ function handleBulkFile(event) {
         const json = XLSX.utils.sheet_to_json(ws, { raw: false });
         rows = json.map(r => {
           const name = (r['Name'] || r['name'] || '').toString().trim();
+          const rawJoin = (r['Joining Date'] || r['joining date'] || r['JoiningDate'] || '').toString().trim();
           if(profession){
             return {
               name,
               type: (r['Type'] || r['type'] || '').toString().trim(),
               detail: (r['Detail'] || r['detail'] || '').toString().trim(),
-              joiningDate: parseDate(r['Joining Date'] || r['joining date'] || r['JoiningDate']),
+              joiningDateRaw: rawJoin,
+              joiningDate: parseDate(rawJoin),
               joinedVia: (r['Joined Via'] || r['joined via'] || r['JoinedVia'] || '').toString().trim()
             };
           }
           return {
             name,
             class: (r['Class'] || r['class'] || '').toString().trim(),
-            joiningDate: parseDate(r['Joining Date'] || r['joining date'] || r['JoiningDate'])
+            joiningDateRaw: rawJoin,
+            joiningDate: parseDate(rawJoin)
           };
         });
       }
@@ -3661,7 +3693,10 @@ function handleBulkFile(event) {
           const rawType = (r.type||'').trim().toLowerCase();
           const type = rawType==='profession' ? 'Profession' : rawType==='education' ? 'Education' : '';
           const detail = r.detail;
-          const joining = r.joiningDate || fmtDate(new Date());
+          // '' (blank cell) defaults to today; null means a date WAS given
+          // but couldn't be understood — that must be a hard error, never
+          // a silent substitution (see parseDate's comment above).
+          const joining = r.joiningDate === null ? r.joiningDateRaw : (r.joiningDate || fmtDate(new Date()));
           const joinedVia = parseJoinedVia(r.joinedVia);
 
           let status = '✅ Valid';
@@ -3670,6 +3705,7 @@ function handleBulkFile(event) {
           if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
           else if (!type) { status = '⚠️ Type must be Profession or Education'; valid = false; errors.push(`Row ${rowNum}: Invalid type "${r.type}"`); }
           else if (!detail) { status = '⚠️ Detail is required'; valid = false; errors.push(`Row ${rowNum}: Missing detail`); }
+          else if (r.joiningDate === null) { status = '⚠️ Could not understand Joining Date "'+r.joiningDateRaw+'" (use DD-MM-YYYY)'; valid = false; errors.push(`Row ${rowNum}: Invalid Joining Date "${r.joiningDateRaw}" — use DD-MM-YYYY`); }
           else if (joinedVia.origin === null) { status = '⚠️ Joined Via must be Directly or VBS'; valid = false; errors.push(`Row ${rowNum}: Invalid "Joined Via" value "${r.joinedVia}"`); }
 
           previewRows.push({ name, secondary: valid ? type+': '+detail : (r.type||'—'), joining, origin: joinedVia.label, status, valid });
@@ -3682,7 +3718,7 @@ function handleBulkFile(event) {
           const name = r.name;
           const cls = r.class.replace('Class ', '').replace('class ', '').trim();
           const clsNum = parseInt(cls);
-          const joining = r.joiningDate || today;
+          const joining = r.joiningDate === null ? r.joiningDateRaw : (r.joiningDate || today);
           const validRange = CLASS_RANGES[schoolLevelForKey(key)] || [4,5,6,7,8,9,10];
 
           let status = '✅ Valid';
@@ -3693,6 +3729,7 @@ function handleBulkFile(event) {
             status = `⚠️ Class must be ${validRange[0]}-${validRange[validRange.length-1]}`; valid = false;
             errors.push(`Row ${rowNum}: Invalid class "${cls}" for this section (must be ${validRange[0]}-${validRange[validRange.length-1]})`);
           }
+          else if (r.joiningDate === null) { status = '⚠️ Could not understand Joining Date "'+r.joiningDateRaw+'" (use DD-MM-YYYY)'; valid = false; errors.push(`Row ${rowNum}: Invalid Joining Date "${r.joiningDateRaw}" — use DD-MM-YYYY`); }
 
           previewRows.push({ name, secondary: cls ? 'Class '+cls : '—', joining, status, valid });
           if (valid) validStudents.push({ name, class: String(clsNum), joiningDate: joining });
