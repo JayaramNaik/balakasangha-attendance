@@ -704,6 +704,21 @@ tbody td{padding:6px 8px;vertical-align:middle}
         🎓 Run Promotion Now
       </button>
     </div>
+    <div id="id-migration-utility-box" style="display:none;background:var(--surface);border:1px solid var(--border2);
+         border-radius:10px;padding:14px;margin-bottom:16px;">
+      <div style="font-weight:700;margin-bottom:4px">🔤 Shorten Legacy IDs</div>
+      <div style="font-size:12.5px;color:var(--text3);margin-bottom:10px">
+        One-time cleanup: converts any student still on the old long-form id
+        (e.g. R53VBS026001) to the new short format (e.g. VBS26001). Same
+        person, same history, same serial — just a shorter id. Safe to run
+        more than once; already-converted students are skipped automatically.
+      </div>
+      <button onclick="migrateLegacyIdsToShortFormat()"
+              style="background:#185FA5;color:#fff;border:none;border-radius:6px;
+                     padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;">
+        🔤 Shorten Existing IDs Now
+      </button>
+    </div>
     <div id="approvals-content"></div>
   </div>
 </div>
@@ -922,16 +937,14 @@ function secondaryFieldValue(key, student){
 function exportFilePrefix(key){ return isProfessionSection(key) ? 'YuvakaSangha' : 'BalakaSangha'; }
 
 // ===================== PERMANENT STUDENT IDs =====================
-// Format: R53VBS<3-digit year><serial>  (Balaka Sangha)
-//      or R53VYS<3-digit year><serial>  (Yuvaka Sangha)
-//   R53   = Ramakrishna Math
-//   53    = VBS founded 1953
+// Format: VBS<2-digit year><serial>  (Balaka Sangha)
+//      or VYS<2-digit year><serial>  (Yuvaka Sangha)
 //   VBS/VYS = which program the person FIRST joined under
-//   <year> = last 3 digits of the joining year, set once, never recalculated
+//   <year> = last 2 digits of the joining year, set once, never recalculated
 //   <serial> = a counter starting at 001 for each new calendar year, per
 //              program — the 26th student joining Balaka Sangha in 2026 is
-//              ...026026, and the very first one joining in 2027 restarts
-//              at ...027001. Never reused within a given year, but the
+//              ...26026, and the very first one joining in 2027 restarts
+//              at ...27001. Never reused within a given year, but the
 //              counter itself resets every January 1st, per program.
 // Balaka Sangha and Yuvaka Sangha each have their OWN counter (and their
 // own per-year reset), so their numbers never interleave with each other
@@ -939,12 +952,21 @@ function exportFilePrefix(key){ return isProfessionSection(key) ? 'YuvakaSangha'
 //
 // The ID is assigned once, at the time a person FIRST joins either program,
 // and never changes again — including if a VBS student later grows up and
-// moves into Yuvaka Sangha. Their id stays R53VBS... forever in that case,
+// moves into Yuvaka Sangha. Their id stays VBS... forever in that case,
 // by design: it's meant to show how long they've been part of the Ashram
 // overall, not just their current program. (confirmEditStudent's "move to
 // section" logic already preserves the same id across any section move —
 // nothing needed there for this.)
-const ID_PREFIXES = { balaka: 'R53VBS', yuvaka: 'R53VYS' };
+//
+// LEGACY_ID_PREFIXES below is what everyone imported before this format
+// change already has (R53VBS.../R53VYS..., 3-digit year) — those ids are
+// NOT rewritten by this change, they stay exactly as issued (permanent
+// means permanent). Anywhere the app needs to recognize "is this already a
+// real id" or "how do I sort/compare ids", it has to check BOTH the new
+// short prefixes and the old long ones, or older students would silently
+// stop being recognized as already having an id.
+const ID_PREFIXES = { balaka: 'VBS', yuvaka: 'VYS' };
+const LEGACY_ID_PREFIXES = { balaka: 'R53VBS', yuvaka: 'R53VYS' };
 const ID_COUNTER_PATHS = { balaka: 'attendance/idCounter', yuvaka: 'attendance/idCounterYuvaka' };
 
 // Which program a section belongs to, for ID-prefix/counter purposes.
@@ -958,7 +980,7 @@ function studentIdYearPart(joiningDateStr){
     const y = parseInt(String(joiningDateStr).slice(0,4), 10);
     if(!isNaN(y) && y > 1900 && y < 3000) year = y;
   }
-  return String(year % 1000).padStart(3, '0');
+  return String(year % 100).padStart(2, '0');
 }
 
 // Each counter document holds one field per year: { serials: { "026": 5,
@@ -984,6 +1006,132 @@ async function generateStudentId(joiningDateStr, program){
   const yearPart = studentIdYearPart(joiningDateStr);
   const serial = await nextSerial(prog, yearPart);
   return ID_PREFIXES[prog] + yearPart + String(serial).padStart(3, '0');
+}
+
+// ===================== ONE-TIME: SHORTEN LEGACY IDS =====================
+// Converts an existing student's OLD-format id (R53VBS.../R53VYS..., 3-digit
+// year) to the NEW short format (VBS.../VYS..., 2-digit year) — same
+// joining year, same serial number, just reformatted. This is NOT a
+// renumbering: the 5th Balaka Sangha joiner of 2024 (R53VBS024005) becomes
+// VBS24005, not a freshly-assigned new serial — so it's safe to run on
+// students who already have real attendance history, since every record
+// moves with them under the exact same serial, just a shorter id string.
+// Returns null if the given id isn't in the legacy format (nothing to do).
+function shortIdFor(legacyId){
+  for(const [prog, legacyPrefix] of Object.entries(LEGACY_ID_PREFIXES)){
+    if(legacyId.startsWith(legacyPrefix)){
+      const rest = legacyId.slice(legacyPrefix.length); // "<3-digit year><serial>"
+      const yearNum = parseInt(rest.slice(0,3), 10) || 0;
+      const serialNum = parseInt(rest.slice(3), 10) || 0;
+      return ID_PREFIXES[prog] + String(yearNum % 100).padStart(2,'0') + String(serialNum).padStart(3,'0');
+    }
+  }
+  return null;
+}
+
+// One-time admin action: finds every student (active in any section, OR
+// archived/departed) still on the old long-form id, and for each one:
+//   1. Re-keys every attendance-record document they have — regular P/A
+//      marks AND "who marked it" tracker docs alike — to the new id,
+//      found via the `studentId` field every record document already
+//      carries (the same field fetchFullHistoryForStudent already queries
+//      by), so their full History view keeps working under the new id.
+//   2. Updates any correction request that's still PENDING (not yet
+//      approved/rejected) and references their old id, so
+//      approveCorrection()'s id-match lookup keeps finding them. Already
+//      -resolved corrections are left alone — those are just a historical
+//      log entry at that point, not a live reference to the current id.
+//   3. Updates the roster entry's `.id` field itself (active or archived).
+// Idempotent and safe to re-run: only ever touches ids that still match the
+// OLD prefix, so anyone already migrated (or newly created under the short
+// format) is simply skipped on a second run — useful if it's interrupted
+// partway (e.g. a dropped connection) and needs to be run again.
+async function migrateLegacyIdsToShortFormat(){
+  if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
+  if(!db || !recordsCollection || !correctionsCollection){ showToast('Not connected — try again shortly'); return; }
+
+  // Build the full worklist BEFORE touching anything, so the confirm
+  // dialog shows an accurate count and nothing partial happens if the
+  // admin cancels.
+  const jobs = []; // { oldId, newId, kind: 'active'|'archived', key?, idx }
+  SEC_KEYS.forEach(key => {
+    (students[key]||[]).forEach((s, idx) => {
+      if(s && typeof s==='object' && s.id){
+        const newId = shortIdFor(s.id);
+        if(newId) jobs.push({ oldId: s.id, newId, kind:'active', key, idx });
+      }
+    });
+  });
+  archivedStudents.forEach((a, idx) => {
+    if(a && a.id){
+      const newId = shortIdFor(a.id);
+      if(newId) jobs.push({ oldId: a.id, newId, kind:'archived', idx });
+    }
+  });
+
+  if(!jobs.length){ showToast('Nothing to migrate — no legacy-format ids found'); return; }
+
+  if(!confirm(
+    `This will shorten ${jobs.length} existing student id(s) to the new format ` +
+    `(e.g. R53VBS026001 → VBS26001) and move all of their attendance history ` +
+    `to the new id. Same person, same history, same serial — just a shorter id.\n\n` +
+    `This may take a little while if there's a lot of history. Don't close the ` +
+    `app while it's running. Proceed?`
+  )) return;
+
+  setSyncStatus('syncing', 'Migrating ids...');
+  let recordsMoved = 0, correctionsUpdated = 0, studentsMigrated = 0;
+  try{
+    for(const job of jobs){
+      // 1. Re-key every attendance-record document for this student, in
+      // chunks of 200 (= up to 400 batched ops: one set + one delete per
+      // record), safely under Firestore's 500-writes-per-batch limit.
+      const snap = await recordsCollection.where('studentId','==', job.oldId).get();
+      if(!snap.empty){
+        const docs = snap.docs;
+        const CHUNK = 200;
+        for(let start=0; start<docs.length; start+=CHUNK){
+          const batch = db.batch();
+          docs.slice(start, start+CHUNK).forEach(doc => {
+            const data = doc.data();
+            const internalKey = internalKeyFromDocId(doc.id);
+            const parts = internalKey.split('|');
+            parts[2] = job.newId;
+            const newDocId = firestoreDocIdFor(parts.join('|'));
+            batch.set(recordsCollection.doc(newDocId), { ...data, studentId: job.newId });
+            batch.delete(doc.ref);
+          });
+          await batch.commit();
+        }
+        recordsMoved += docs.length;
+      }
+
+      // 2. Update any still-pending correction referencing the old id.
+      const pendingSnap = await correctionsCollection
+        .where('studentId','==', job.oldId)
+        .where('status','==','pending')
+        .get();
+      for(const doc of pendingSnap.docs){
+        await doc.ref.update({ studentId: job.newId });
+        correctionsUpdated++;
+      }
+
+      // 3. Update the roster entry itself (saved together, once, below).
+      if(job.kind === 'active') students[job.key][job.idx].id = job.newId;
+      else archivedStudents[job.idx].id = job.newId;
+      studentsMigrated++;
+    }
+
+    const touchedSections = [...new Set(jobs.filter(j=>j.kind==='active').map(j=>j.key))];
+    await saveRosterChange({ sections: touchedSections, archived: jobs.some(j=>j.kind==='archived') });
+
+    showToast(`✅ Migrated ${studentsMigrated} id(s), moved ${recordsMoved} attendance record(s), updated ${correctionsUpdated} pending correction(s)`);
+    renderCurrentSection();
+  }catch(e){
+    showToast('⚠️ Migration stopped partway due to an error: ' + e.message + ' — safe to re-run, already-migrated ids are skipped automatically.');
+  }finally{
+    setSyncStatus('synced');
+  }
 }
 
 // Returns the permanent id for the student currently at students[key][idx].
@@ -1071,7 +1219,13 @@ async function migrateMissingStudentIds(){
         // Already an archive tag, or already an id-shaped key (starts with
         // either program's fixed prefix) — leave it exactly as it is, no
         // Firestore write needed since nothing about it changed.
-        if(idxStr.startsWith('__') || idxStr.startsWith(ID_PREFIXES.balaka) || idxStr.startsWith(ID_PREFIXES.yuvaka)){
+        // Recognize BOTH the new short prefixes (VBS/VYS) and the legacy
+        // long ones (R53VBS/R53VYS) here — students imported before the id
+        // format change keep their original long-form ids forever, so this
+        // check has to accept both shapes or those older students' record
+        // keys would look "unmigrated" and get incorrectly re-processed.
+        if(idxStr.startsWith('__') || idxStr.startsWith(ID_PREFIXES.balaka) || idxStr.startsWith(ID_PREFIXES.yuvaka)
+           || idxStr.startsWith(LEGACY_ID_PREFIXES.balaka) || idxStr.startsWith(LEGACY_ID_PREFIXES.yuvaka)){
           rebuilt[k] = records[k];
           return;
         }
@@ -1153,19 +1307,39 @@ function setSortMode(mode){
 }
 
 // Parses a permanent student ID into its parts for correct numeric
-// comparison. IDs are fixed-shape: a 6-character prefix (R53VBS/R53VYS),
-// then a 3-digit joining year, then a serial number. Comparing the PARSED
-// numbers (not the raw string) is what makes "join year order" reliable —
-// a plain string comparison would usually happen to work, but would break
-// silently the day any single year's serial count reaches 4 digits (e.g.
-// "999" sorting after "1000" as text, even though 999 joined earlier).
+// comparison. Two shapes exist and both must be handled: the CURRENT
+// format (3-char prefix VBS/VYS + 2-digit year + serial) and the LEGACY
+// format every already-imported student still has (6-char prefix
+// R53VBS/R53VYS + 3-digit year + serial) — ids are permanent and are never
+// rewritten when the format changes, so both shapes coexist forever.
+// Comparing the PARSED numbers (not the raw string) is what makes "join
+// year order" reliable — a plain string comparison would usually happen to
+// work, but would break silently the day any single year's serial count
+// reaches 4 digits (e.g. "999" sorting after "1000" as text, even though
+// 999 joined earlier). Note both shapes' year fields parse to the SAME
+// number for the same year (legacy "026" and current "26" both give 26),
+// so old and new ids still sort correctly against each other by year.
 function parseStudentId(id){
-  if(!id || id.length < 9) return { prefix: id || '', year: 0, serial: 0 };
-  return {
-    prefix: id.slice(0, 6),
-    year: parseInt(id.slice(6, 9), 10) || 0,
-    serial: parseInt(id.slice(9), 10) || 0
-  };
+  if(!id) return { prefix: '', year: 0, serial: 0 };
+  for(const p of [LEGACY_ID_PREFIXES.balaka, LEGACY_ID_PREFIXES.yuvaka]){
+    if(id.startsWith(p) && id.length >= p.length + 3){
+      return {
+        prefix: p,
+        year: parseInt(id.slice(p.length, p.length + 3), 10) || 0,
+        serial: parseInt(id.slice(p.length + 3), 10) || 0
+      };
+    }
+  }
+  for(const p of [ID_PREFIXES.balaka, ID_PREFIXES.yuvaka]){
+    if(id.startsWith(p) && id.length >= p.length + 2){
+      return {
+        prefix: p,
+        year: parseInt(id.slice(p.length, p.length + 2), 10) || 0,
+        serial: parseInt(id.slice(p.length + 2), 10) || 0
+      };
+    }
+  }
+  return { prefix: id, year: 0, serial: 0 }; // unrecognized shape (e.g. legacy array-index key)
 }
 function compareStudentIds(idA, idB){
   const a = parseStudentId(idA), b = parseStudentId(idB);
@@ -3949,12 +4123,15 @@ function renderApprovals(){
   const el = document.getElementById('approvals-content');
   if(!el) return;
   const promoBox = document.getElementById('promotion-utility-box');
+  const idMigrationBox = document.getElementById('id-migration-utility-box');
   if(currentUserRole!=='admin'){
     if(promoBox) promoBox.style.display = 'none';
+    if(idMigrationBox) idMigrationBox.style.display = 'none';
     el.innerHTML = '<div class="empty-state">Admin only.</div>';
     return;
   }
   if(promoBox) promoBox.style.display = 'block';
+  if(idMigrationBox) idMigrationBox.style.display = 'block';
 
   let html = '<h3 style="margin:6px 0 14px">🧑‍🎓 Pending Student Requests</h3>';
   if(!allPendingStudentRequests.length){
