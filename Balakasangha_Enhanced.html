@@ -712,6 +712,9 @@ tbody td{padding:6px 8px;vertical-align:middle}
         (e.g. R53VBS026001) to the new short format (e.g. VBS26001). Same
         person, same history, same serial — just a shorter id. Safe to run
         more than once; already-converted students are skipped automatically.
+        <strong>If the Audit Log tab shows old-format attendance data still
+        waiting to be migrated, do that first</strong> — this only re-keys
+        records already in the new per-record storage.
       </div>
       <button onclick="migrateLegacyIdsToShortFormat()"
               style="background:#185FA5;color:#fff;border:none;border-radius:6px;
@@ -1049,6 +1052,20 @@ function shortIdFor(legacyId){
 async function migrateLegacyIdsToShortFormat(){
   if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
   if(!db || !recordsCollection || !correctionsCollection){ showToast('Not connected — try again shortly'); return; }
+
+  // This migration only re-keys records living in the SUBCOLLECTION
+  // (recordsCollection) — it has no way to find or move records still
+  // sitting in the OLD attendance/state.records field (legacyRecordsField).
+  // If any student being renamed here still has entries back there, this
+  // migration would silently leave them behind under the OLD id forever —
+  // the UI would have no way to find them again after the roster id
+  // changes. So: require the old-storage cleanup (Audit Log tab →
+  // "Migrate to new storage") to be fully done first, rather than risk
+  // that gap.
+  if(legacyRecordsField && Object.keys(legacyRecordsField).length){
+    showToast('⚠️ There is still old-format attendance data waiting to be migrated. Go to the Audit Log tab and click "Migrate to new storage" first, then come back and run this.');
+    return;
+  }
 
   // Build the full worklist BEFORE touching anything, so the confirm
   // dialog shows an accurate count and nothing partial happens if the
