@@ -413,7 +413,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
   <!-- Global Search -->
   <div class="global-search-bar no-print">
     <span style="font-size:16px">🔍</span>
-    <input type="text" id="global-search-input" placeholder="Search student across all sections..." oninput="globalSearch(this.value)">
+    <input type="text" id="global-search-input" placeholder="Search by name or id, across all sections..." oninput="globalSearch(this.value)">
     <button onclick="clearGlobalSearch()" style="background:none;border:none;font-size:16px;color:var(--text3);cursor:pointer" title="Clear">✕</button>
   </div>
   <div class="global-search-results no-print" id="global-search-results"></div>
@@ -702,6 +702,21 @@ tbody td{padding:6px 8px;vertical-align:middle}
               style="background:#185FA5;color:#fff;border:none;border-radius:6px;
                      padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;">
         🎓 Run Promotion Now
+      </button>
+    </div>
+    <div id="id-duplicate-check-box" style="display:none;background:#FCEBEB;border:1.5px solid #E24B4A;
+         border-radius:10px;padding:14px;margin-bottom:16px;">
+      <div style="font-weight:700;margin-bottom:4px">🔎 Find Duplicate IDs</div>
+      <div style="font-size:12.5px;color:var(--text3);margin-bottom:10px">
+        Checks every student (active and archived) for a shared id. Two people
+        sharing an id means marking one's attendance silently marks the
+        other's too — run this any time something looks wrong, it changes
+        nothing on its own.
+      </div>
+      <button onclick="findDuplicateStudentIds()"
+              style="background:#E24B4A;color:#fff;border:none;border-radius:6px;
+                     padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;">
+        🔎 Check for Duplicate IDs
       </button>
     </div>
     <div id="id-migration-utility-box" style="display:none;background:var(--surface);border:1px solid var(--border2);
@@ -1011,7 +1026,42 @@ async function generateStudentId(joiningDateStr, program){
   return ID_PREFIXES[prog] + yearPart + String(serial).padStart(3, '0');
 }
 
-// ===================== ONE-TIME: SHORTEN LEGACY IDS =====================
+// ===================== DIAGNOSTIC: FIND DUPLICATE IDS =====================
+// Read-only — scans every student (active in any section, and archived) and
+// reports any id that's currently assigned to more than one of them. Two
+// students sharing an id is serious: attendance is stored keyed BY id, so
+// marking one silently marks the other too, since Firestore sees them as
+// the same record. This has no legitimate cause under normal use — it can
+// only happen from a bug (e.g. a ambiguous rename creating a collision with
+// an id already in use). Safe to run any time; changes nothing.
+function findDuplicateStudentIds(){
+  const byId = {}; // id -> [{name, key, kind, idx}]
+  SEC_KEYS.forEach(key => {
+    (students[key]||[]).forEach((s, idx) => {
+      if(s && typeof s==='object' && s.id){
+        (byId[s.id] = byId[s.id] || []).push({ name: s.name, key, kind:'active', idx });
+      }
+    });
+  });
+  archivedStudents.forEach((a, idx) => {
+    if(a && a.id){
+      (byId[a.id] = byId[a.id] || []).push({ name: a.name, key: null, kind:'archived', idx });
+    }
+  });
+  const dupes = Object.entries(byId).filter(([id, list]) => list.length > 1);
+  if(!dupes.length){
+    alert('✅ No duplicate ids found — every student has a unique id.');
+    return;
+  }
+  const lines = dupes.map(([id, list]) =>
+    id + ':\n' + list.map(s => '  - ' + s.name + ' (' + (s.kind==='archived' ? 'archived' : (SECTIONS[s.key]||{}).label || s.key) + ')').join('\n')
+  );
+  alert('⚠️ Found ' + dupes.length + ' duplicate id(s):\n\n' + lines.join('\n\n') +
+        '\n\nDo NOT mark attendance for these people until this is resolved — ' +
+        'marking one currently marks all of them. Send this list to whoever is fixing the app.');
+}
+
+
 // Converts an existing student's OLD-format id (R53VBS.../R53VYS..., 3-digit
 // year) to the NEW short format (VBS.../VYS..., 2-digit year) — same
 // joining year, same serial number, just reformatted. This is NOT a
@@ -1019,17 +1069,59 @@ async function generateStudentId(joiningDateStr, program){
 // VBS24005, not a freshly-assigned new serial — so it's safe to run on
 // students who already have real attendance history, since every record
 // moves with them under the exact same serial, just a shorter id string.
-// Returns null if the given id isn't in the legacy format (nothing to do).
-function shortIdFor(legacyId){
+// Converts an existing student's OLD-format id (R53VBS.../R53VYS..., 3-digit
+// year) to the NEW short format (VBS.../VYS..., 2-digit year) — same
+// joining year, same serial number, just reformatted, UNLESS that exact
+// short id is already taken by someone else. That collision is a real risk:
+// once the app switched to issuing short ids directly, brand-new students
+// started their OWN counter fresh at 001 for the current year — completely
+// independent of whatever serial the OLD legacy counter had already
+// reached for that same year. So a legacy student's "natural" reformatted
+// id can land EXACTLY on an id already given to someone added after the
+// switch. Two people sharing one id is not cosmetic — attendance is stored
+// keyed BY id, so marking one silently marks both (see
+// findDuplicateStudentIds() above, and mark()/setRecord() below). So: if
+// the natural candidate is taken, bump forward to the next free serial for
+// that prefix+year instead. `takenIds` must include every id currently in
+// use (checked and updated by the caller as it goes, so two legacy
+// students being migrated in the same run can't collide with EACH OTHER
+// either, not just with pre-existing ids).
+function shortIdFor(legacyId, takenIds){
   for(const [prog, legacyPrefix] of Object.entries(LEGACY_ID_PREFIXES)){
     if(legacyId.startsWith(legacyPrefix)){
       const rest = legacyId.slice(legacyPrefix.length); // "<3-digit year><serial>"
       const yearNum = parseInt(rest.slice(0,3), 10) || 0;
-      const serialNum = parseInt(rest.slice(3), 10) || 0;
-      return ID_PREFIXES[prog] + String(yearNum % 100).padStart(2,'0') + String(serialNum).padStart(3,'0');
+      let serialNum = parseInt(rest.slice(3), 10) || 0;
+      const yearKey = String(yearNum % 100).padStart(2,'0');
+      const prefix = ID_PREFIXES[prog];
+      let candidate = prefix + yearKey + String(serialNum).padStart(3,'0');
+      let bumped = false;
+      while(takenIds && takenIds.has(candidate)){
+        serialNum++;
+        candidate = prefix + yearKey + String(serialNum).padStart(3,'0');
+        bumped = true;
+      }
+      return { id: candidate, prog, yearKey, serial: serialNum, bumped };
     }
   }
   return null;
+}
+
+// After migrating, make sure the live serial counter for a given
+// prefix+year can never re-issue a serial that a bumped migration just
+// consumed. Only ever moves the counter FORWARD, never back — if the
+// counter is already ahead of what we need, this is a no-op.
+async function reserveMinSerial(program, yearKey, minNextValue){
+  if(!db) return;
+  const counterRef = db.doc(ID_COUNTER_PATHS[program] || ID_COUNTER_PATHS.balaka);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(counterRef);
+    const serials = (snap.exists && snap.data().serials) ? snap.data().serials : {};
+    const current = (typeof serials[yearKey] === 'number') ? serials[yearKey] : 1;
+    if(minNextValue > current){
+      tx.set(counterRef, { serials: { ...serials, [yearKey]: minNextValue } });
+    }
+  });
 }
 
 // One-time admin action: finds every student (active in any section, OR
@@ -1069,20 +1161,37 @@ async function migrateLegacyIdsToShortFormat(){
 
   // Build the full worklist BEFORE touching anything, so the confirm
   // dialog shows an accurate count and nothing partial happens if the
-  // admin cancels.
-  const jobs = []; // { oldId, newId, kind: 'active'|'archived', key?, idx }
+  // admin cancels. takenIds starts as every id currently in use anywhere
+  // (active or archived) — shortIdFor() checks against this AND adds each
+  // newly-assigned id to it immediately, so two legacy students in the same
+  // run can't collide with each other either, not just with ids that
+  // already existed before this run started.
+  const takenIds = new Set();
+  SEC_KEYS.forEach(key => (students[key]||[]).forEach(s => { if(s && typeof s==='object' && s.id) takenIds.add(s.id); }));
+  archivedStudents.forEach(a => { if(a && a.id) takenIds.add(a.id); });
+
+  const jobs = []; // { oldId, newId, kind: 'active'|'archived', key?, idx, prog, yearKey, serial }
+  let collisionsAvoided = 0;
   SEC_KEYS.forEach(key => {
     (students[key]||[]).forEach((s, idx) => {
       if(s && typeof s==='object' && s.id){
-        const newId = shortIdFor(s.id);
-        if(newId) jobs.push({ oldId: s.id, newId, kind:'active', key, idx });
+        const result = shortIdFor(s.id, takenIds);
+        if(result){
+          if(result.bumped) collisionsAvoided++;
+          jobs.push({ oldId: s.id, newId: result.id, kind:'active', key, idx, prog: result.prog, yearKey: result.yearKey, serial: result.serial });
+          takenIds.add(result.id);
+        }
       }
     });
   });
   archivedStudents.forEach((a, idx) => {
     if(a && a.id){
-      const newId = shortIdFor(a.id);
-      if(newId) jobs.push({ oldId: a.id, newId, kind:'archived', idx });
+      const result = shortIdFor(a.id, takenIds);
+      if(result){
+        if(result.bumped) collisionsAvoided++;
+        jobs.push({ oldId: a.id, newId: result.id, kind:'archived', idx, prog: result.prog, yearKey: result.yearKey, serial: result.serial });
+        takenIds.add(result.id);
+      }
     }
   });
 
@@ -1142,7 +1251,22 @@ async function migrateLegacyIdsToShortFormat(){
     const touchedSections = [...new Set(jobs.filter(j=>j.kind==='active').map(j=>j.key))];
     await saveRosterChange({ sections: touchedSections, archived: jobs.some(j=>j.kind==='archived') });
 
-    showToast(`✅ Migrated ${studentsMigrated} id(s), moved ${recordsMoved} attendance record(s), updated ${correctionsUpdated} pending correction(s)`);
+    // 4. Reserve each touched prefix+year's counter to at least one past
+    // the highest serial any bumped job landed on, so a NEW student added
+    // right after this can never be handed a serial that collides with
+    // what we just assigned here.
+    const maxSerialByProgYear = {}; // "prog|yearKey" -> highest serial used
+    jobs.forEach(j => {
+      const k = j.prog + '|' + j.yearKey;
+      if(!(k in maxSerialByProgYear) || j.serial > maxSerialByProgYear[k]) maxSerialByProgYear[k] = j.serial;
+    });
+    for(const [k, maxSerial] of Object.entries(maxSerialByProgYear)){
+      const [prog, yearKey] = k.split('|');
+      await reserveMinSerial(prog, yearKey, maxSerial + 1);
+    }
+
+    const collisionNote = collisionsAvoided > 0 ? ` (${collisionsAvoided} id collision(s) were automatically avoided by bumping to the next free serial)` : '';
+    showToast(`✅ Migrated ${studentsMigrated} id(s), moved ${recordsMoved} attendance record(s), updated ${correctionsUpdated} pending correction(s)${collisionNote}`);
     renderCurrentSection();
   }catch(e){
     showToast('⚠️ Migration stopped partway due to an error: ' + e.message + ' — safe to re-run, already-migrated ids are skipped automatically.');
@@ -2994,11 +3118,14 @@ function globalSearch(query){
     students[key].forEach((s, i) => {
       const name = typeof s === 'string' ? s : s.name;
       const cls  = secondaryFieldValue(key, s);
-      if(name.toLowerCase().includes(q)){
+      const id = idFor(key, i);
+      const nameHit = name.toLowerCase().includes(q);
+      const idHit = id.toLowerCase().includes(q);
+      if(nameHit || idHit){
         const stats = getStats(key, i);
         const pct = stats.pct !== null ? stats.pct+'%' : '—';
         const mark = curDate ? getRecord(key, curDate, i) : null; // 'P' | 'A' | null
-        matches.push({ key, i, name, cls, pct, mark, section: (SECTIONS[key]||{}).label||key });
+        matches.push({ key, i, name, cls, id, idHit, pct, mark, section: (SECTIONS[key]||{}).label||key });
       }
     });
   });
@@ -3017,11 +3144,18 @@ function globalSearch(query){
       : m.mark === 'P' ? `<span style="font-size:10px;color:var(--green,#1D9E75);font-weight:700">✓ PRESENT</span>`
       : m.mark === 'A' ? `<span style="font-size:10px;color:var(--red,#C0392B);font-weight:700">✗ ABSENT</span>`
       : `<span style="font-size:10px;color:var(--text3)">NOT MARKED</span>`;
+    // If the match came from the id rather than the name, show the id
+    // highlighted right under the name instead of the usual class/section
+    // line, so it's clear WHY this row matched.
+    const idLine = m.idHit
+      ? `<div class="global-result-meta" style="font-family:monospace">${highlightMatch(m.id, query)}</div>`
+      : '';
     return `
     <div class="global-result-row" onclick="jumpToStudent('${m.key}',${m.i})">
       <span style="font-size:18px">👤</span>
       <div style="flex:1">
-        <div class="global-result-name">${highlightMatch(m.name, query)}</div>
+        <div class="global-result-name">${m.idHit ? escapeHtml(m.name) : highlightMatch(m.name, query)}</div>
+        ${idLine}
         <div class="global-result-meta">${isProfessionSection(m.key) ? escapeHtml(m.cls) : 'Class '+escapeHtml(m.cls)} · ${escapeHtml(m.section)} · Attendance: ${m.pct} · ${statusTag}</div>
       </div>
       <span class="global-result-badge">${escapeHtml(m.section.split('—')[0].trim())}</span>
@@ -3609,7 +3743,7 @@ function handleBulkFile(event) {
           if(mo>=1 && mo<=12 && d>=1 && d<=31) return m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');
           return null;
         }
-        m = raw.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/); // DD-MM-YYYY or DD/MM/YYYY
+        m = raw.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/); // DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY
         if(m){
           const d = parseInt(m[1],10), mo = parseInt(m[2],10);
           // Only accept the day-first reading if it's actually a valid date
@@ -3664,17 +3798,30 @@ function handleBulkFile(event) {
         const wb = XLSX.read(data, { type: 'array', cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const json = XLSX.utils.sheet_to_json(ws, { raw: false });
+        // Header names are matched flexibly, not just the exact template
+        // wording — real spreadsheets people actually hand you often use
+        // their own naming ("Date Of Joining" instead of "Joining Date",
+        // "VBS/VYS" instead of "Joined Via", "Profession"/"Designation"
+        // instead of "Type"/"Detail"). Previously an unrecognized header
+        // meant that column silently came through as an EMPTY string for
+        // every row — which for Joining Date in particular meant every
+        // row quietly defaulted to today's date (and so the CURRENT year
+        // in the id) with no error shown, even though the file clearly had
+        // a date column, just under a different name.
         rows = json.map(r => {
           const name = (r['Name'] || r['name'] || '').toString().trim();
-          const rawJoin = (r['Joining Date'] || r['joining date'] || r['JoiningDate'] || '').toString().trim();
+          const rawJoin = (r['Joining Date'] || r['joining date'] || r['JoiningDate']
+                         || r['Date Of Joining'] || r['Date of Joining'] || r['date of joining']
+                         || '').toString().trim();
           if(profession){
             return {
               name,
-              type: (r['Type'] || r['type'] || '').toString().trim(),
-              detail: (r['Detail'] || r['detail'] || '').toString().trim(),
+              type: (r['Type'] || r['type'] || r['Profession'] || r['profession'] || '').toString().trim(),
+              detail: (r['Detail'] || r['detail'] || r['Designation'] || r['designation'] || '').toString().trim(),
               joiningDateRaw: rawJoin,
               joiningDate: parseDate(rawJoin),
-              joinedVia: (r['Joined Via'] || r['joined via'] || r['JoinedVia'] || '').toString().trim()
+              joinedVia: (r['Joined Via'] || r['joined via'] || r['JoinedVia']
+                        || r['VBS/VYS'] || r['VBS / VYS'] || r['vbs/vys'] || '').toString().trim()
             };
           }
           return {
@@ -3697,13 +3844,17 @@ function handleBulkFile(event) {
         // id prefix/counter the student draws from (R53VYS vs R53VBS), it's
         // never stored on the student record itself. Blank/unrecognized
         // values default to "Directly", matching the modal's own default.
+        // Also accepts "VBS"/"VYS" directly, matching a real-world sheet
+        // column literally named "VBS/VYS" whose values are those two
+        // letters — VBS = grew up through Balaka Sangha, VYS = joined
+        // Yuvaka Sangha directly.
         const parseJoinedVia = (raw) => {
           const v = (raw||'').trim().toLowerCase();
           if(!v) return { origin: 'yuvaka', label: 'Directly' };
           if(v==='vbs' || v==='balaka' || v==='via vbs' || v==='balaka sangha' || v.startsWith('grew up')) {
             return { origin: 'balaka', label: 'Via VBS' };
           }
-          if(v==='direct' || v==='directly' || v==='yuvaka' || v==='new') {
+          if(v==='direct' || v==='directly' || v==='yuvaka' || v==='vys' || v==='new') {
             return { origin: 'yuvaka', label: 'Directly' };
           }
           return { origin: null, label: raw }; // unrecognized — flagged below
@@ -3712,7 +3863,12 @@ function handleBulkFile(event) {
           const rowNum = i + 2;
           const name = r.name;
           const rawType = (r.type||'').trim().toLowerCase();
-          const type = rawType==='profession' ? 'Profession' : rawType==='education' ? 'Education' : '';
+          // Accepts the template's own wording (Profession/Education) AND
+          // a real-world sheet's "Profession" column whose actual VALUES
+          // are "Student"/"Working" rather than the header word itself.
+          const type = (rawType==='profession' || rawType==='working') ? 'Profession'
+                     : (rawType==='education' || rawType==='student') ? 'Education'
+                     : '';
           const detail = r.detail;
           // '' (blank cell) defaults to today; null means a date WAS given
           // but couldn't be understood — that must be a hard error, never
@@ -4182,14 +4338,17 @@ function renderApprovals(){
   if(!el) return;
   const promoBox = document.getElementById('promotion-utility-box');
   const idMigrationBox = document.getElementById('id-migration-utility-box');
+  const dupeCheckBox = document.getElementById('id-duplicate-check-box');
   if(currentUserRole!=='admin'){
     if(promoBox) promoBox.style.display = 'none';
     if(idMigrationBox) idMigrationBox.style.display = 'none';
+    if(dupeCheckBox) dupeCheckBox.style.display = 'none';
     el.innerHTML = '<div class="empty-state">Admin only.</div>';
     return;
   }
   if(promoBox) promoBox.style.display = 'block';
   if(idMigrationBox) idMigrationBox.style.display = 'block';
+  if(dupeCheckBox) dupeCheckBox.style.display = 'block';
 
   let html = '<h3 style="margin:6px 0 14px">🧑‍🎓 Pending Student Requests</h3>';
   if(!allPendingStudentRequests.length){
