@@ -715,9 +715,38 @@ tbody td{padding:6px 8px;vertical-align:middle}
       </div>
       <button onclick="findDuplicateStudentIds()"
               style="background:#E24B4A;color:#fff;border:none;border-radius:6px;
-                     padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;">
+                     padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;margin-bottom:10px">
         🔎 Check for Duplicate IDs
       </button>
+      <div style="border-top:1px solid #F5C6C5;margin:10px 0;padding-top:10px">
+        <div style="font-weight:700;margin-bottom:4px">🔢 Sync ID Counters</div>
+        <div style="font-size:12.5px;color:var(--text3);margin-bottom:10px">
+          Makes sure the live id counters know about every id currently on
+          the roster, and catches them up if not — closes the gap that
+          would otherwise let a normal new-student add be handed an id
+          that's already in use. Safe to run any time, changes nothing but
+          the counters themselves.
+        </div>
+        <button onclick="syncIdCountersToRoster()"
+                style="background:#E24B4A;color:#fff;border:none;border-radius:6px;
+                       padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;margin-bottom:10px">
+          🔢 Sync Counters Now
+        </button>
+      </div>
+      <div style="border-top:1px solid #F5C6C5;margin:10px 0;padding-top:10px">
+        <div style="font-weight:700;margin-bottom:4px">👻 Find Orphaned Attendance Records</div>
+        <div style="font-size:12.5px;color:var(--text3);margin-bottom:10px">
+          Read-only. Scans every attendance record for one whose student id
+          doesn't belong to anyone currently on the roster — i.e. history
+          that's genuinely invisible right now. Separates the known,
+          expected ones (the 13 pairs' retired ids) from anything new.
+        </div>
+        <button onclick="findOrphanedAttendanceRecords()"
+                style="background:#E24B4A;color:#fff;border:none;border-radius:6px;
+                       padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;">
+          👻 Scan for Orphaned Records
+        </button>
+      </div>
     </div>
     <div id="known-issue-repair-box" style="display:none;background:#FFF3CD;border:1.5px solid #FFC107;
          border-radius:10px;padding:14px;margin-bottom:16px;">
@@ -1076,6 +1105,122 @@ function findDuplicateStudentIds(){
   alert('⚠️ Found ' + dupes.length + ' duplicate id(s):\n\n' + lines.join('\n\n') +
         '\n\nDo NOT mark attendance for these people until this is resolved — ' +
         'marking one currently marks all of them. Send this list to whoever is fixing the app.');
+}
+
+// Checks the LIVE id counters (attendance/idCounter, idCounterYuvaka) against
+// every id actually in use on the current roster, and bumps any counter
+// that's behind. This matters because generateStudentId() — the NORMAL
+// "add student" / bulk-import path — reads its next serial from these
+// counter documents, NOT from scanning the roster. Anything that ever
+// assigns an id WITHOUT going through that exact counter transaction (the
+// July 2026 repair tool's freshIdForYear is one such case, and the
+// original id-shortening migration would have been too, if it didn't
+// already call reserveMinSerial itself) leaves the counter unaware that
+// serial is now taken — so a later NORMAL add could get handed that exact
+// same id again. Only ever moves a counter FORWARD, never back, so this is
+// safe to run at any time, as often as you like, as a general safety net.
+async function syncIdCountersToRoster(){
+  if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
+  if(!db){ showToast('Not connected — try again shortly'); return; }
+
+  const highestByProgYear = {}; // "prog|yearKey" -> highest serial currently in use
+  const scan = (id) => {
+    for(const [prog, prefix] of Object.entries(ID_PREFIXES)){
+      if(id.startsWith(prefix)){
+        const rest = id.slice(prefix.length);
+        if(rest.length === 5){ // 2-digit year + 3-digit serial — the current short format
+          const yearKey = rest.slice(0,2);
+          const serial = parseInt(rest.slice(2), 10);
+          if(!isNaN(serial)){
+            const key = prog+'|'+yearKey;
+            if(!(key in highestByProgYear) || serial > highestByProgYear[key]) highestByProgYear[key] = serial;
+          }
+        }
+        return;
+      }
+    }
+  };
+  SEC_KEYS.forEach(key => (students[key]||[]).forEach(s => { if(s && typeof s==='object' && s.id) scan(s.id); }));
+  archivedStudents.forEach(a => { if(a && a.id) scan(a.id); });
+
+  const entries = Object.entries(highestByProgYear);
+  if(!entries.length){ showToast('Nothing to sync — no short-format ids found on the roster'); return; }
+
+  if(!confirm(
+    `This checks ${entries.length} (program, year) counter(s) against every id actually on the ` +
+    `roster right now, and bumps any counter that's behind — so a normal new-student add can never ` +
+    `be handed an id that collides with someone already here. Safe to run any time. Proceed?`
+  )) return;
+
+  setSyncStatus('syncing', 'Syncing id counters...');
+  let bumped = 0;
+  try{
+    for(const [key, highestSerial] of entries){
+      const [prog, yearKey] = key.split('|');
+      await reserveMinSerial(prog, yearKey, highestSerial + 1);
+      bumped++;
+    }
+    showToast(`✅ Checked ${bumped} counter(s) against the roster — any that were behind are now caught up.`);
+  }catch(e){
+    showToast('⚠️ Sync stopped partway: ' + e.message);
+  }finally{
+    setSyncStatus('synced');
+  }
+}
+
+// Read-only diagnostic. Every attendance-record document carries a
+// studentId field — this finds any record whose studentId doesn't belong
+// to ANYONE currently on the roster (active or archived), i.e. history
+// that's genuinely invisible right now because nothing points to it. Two
+// sources of that are already known and expected: the 13 pairs' old
+// retired ids from the July 2026 repair (deliberately left parked, pending
+// your manual reconciliation) — anything else found here is new
+// information, not something already accounted for.
+async function findOrphanedAttendanceRecords(){
+  if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
+  if(!db || !recordsCollection){ showToast('Not connected — try again shortly'); return; }
+
+  const knownIds = new Set();
+  SEC_KEYS.forEach(key => (students[key]||[]).forEach(s => { if(s && typeof s==='object' && s.id) knownIds.add(s.id); }));
+  archivedStudents.forEach(a => { if(a && a.id) knownIds.add(a.id); });
+
+  // The 13 pairs' old ids, deliberately retired by the July 2026 repair —
+  // orphaned records under these are EXPECTED, not a new finding.
+  const knownRetiredIds = new Set([
+    'VBS25011','VBS22001','VBS24006','VBS24007','VBS22002','VBS23001','VBS22003',
+    'VBS22004','VBS23002','VBS24008','VBS24009','VBS24010','VBS23003'
+  ]);
+
+  setSyncStatus('syncing', 'Scanning attendance records...');
+  try{
+    const snap = await recordsCollection.get();
+    const byId = {};
+    snap.docs.forEach(doc => {
+      const sid = doc.data().studentId;
+      if(sid && !knownIds.has(sid)){
+        (byId[sid] = byId[sid] || []).push(doc.id);
+      }
+    });
+
+    const expectedIds = Object.keys(byId).filter(id => knownRetiredIds.has(id));
+    const unexpectedIds = Object.keys(byId).filter(id => !knownRetiredIds.has(id));
+
+    let msg = `Scanned ${snap.size} attendance record(s) total.\n\n`;
+    msg += `${expectedIds.length} orphaned id(s) are the known retired ids from the July 2026 repair `
+         + `(expected — this is exactly the history your reconciliation Excel is meant to recover).\n\n`;
+    if(unexpectedIds.length){
+      msg += `⚠️ ${unexpectedIds.length} UNEXPECTED orphaned id(s) — these don't belong to any current `
+           + `student and aren't part of the known repair:\n`;
+      unexpectedIds.forEach(id => { msg += `  ${id}: ${byId[id].length} record(s)\n`; });
+    } else {
+      msg += `✅ No unexpected orphaned records — everything else is accounted for.`;
+    }
+    alert(msg);
+  }catch(e){
+    showToast('⚠️ Scan failed: ' + e.message);
+  }finally{
+    setSyncStatus('synced');
+  }
 }
 
 
