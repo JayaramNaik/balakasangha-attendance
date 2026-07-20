@@ -719,6 +719,23 @@ tbody td{padding:6px 8px;vertical-align:middle}
         🔎 Check for Duplicate IDs
       </button>
     </div>
+    <div id="known-issue-repair-box" style="display:none;background:#FFF3CD;border:1.5px solid #FFC107;
+         border-radius:10px;padding:14px;margin-bottom:16px;">
+      <div style="font-weight:700;margin-bottom:4px">🛠️ Repair July 2026 Audit Findings</div>
+      <div style="font-size:12.5px;color:var(--text3);margin-bottom:10px">
+        One-time repair for the specific issues found auditing the July 2026
+        export: 33 Old High School students with a corrupted joining date /
+        wrong-year id, and 28 duplicate-id groups (15 safe, 13 with
+        genuinely merged history — see chat for the full breakdown). Safe
+        to run once; matches students by name, so run this before making
+        other roster changes to those specific people.
+      </div>
+      <button onclick="runKnownIssueRepair()"
+              style="background:#B8860B;color:#fff;border:none;border-radius:6px;
+                     padding:7px 16px;cursor:pointer;font-size:12.5px;font-weight:600;">
+        🛠️ Run This Repair
+      </button>
+    </div>
     <div id="id-migration-utility-box" style="display:none;background:var(--surface);border:1px solid var(--border2);
          border-radius:10px;padding:14px;margin-bottom:16px;">
       <div style="font-weight:700;margin-bottom:4px">🔤 Shorten Legacy IDs</div>
@@ -1123,6 +1140,251 @@ async function reserveMinSerial(program, yearKey, minNextValue){
     }
   });
 }
+
+// ===================== ONE-TIME REPAIR: JULY 2026 EXPORT AUDIT =====================
+// This repairs a specific, already-identified set of data issues found by
+// auditing a July 2026 attendance export against the live roster, from
+// BEFORE the id-collision fix in migrateLegacyIdsToShortFormat() existed.
+// Three distinct problems, three distinct fixes — see runKnownIssueRepair()
+// below for what each one actually does and why. This is data-specific
+// (hardcoded to the exact students found in that audit), not a general
+// detector — findDuplicateStudentIds() above remains the general-purpose
+// tool for anything found after this.
+
+// Issue A: 33 students (all Old High School) whose Joining Date is literally
+// corrupted text like "undefined-undefined-15/6/2025" — a symptom of a very
+// old, pre-fix bulk import choking on slash-formatted dates. Their real
+// date was recovered from the tail of that corrupted string; their id's
+// embedded year (26, i.e. 2026) does not match their real joining year.
+const REPAIR_ISSUE_A = [
+    { name:"Manjunath Prasad Bhat C", key:"old-high", oldId:"VBS26072", correctJoiningDate:"2025-06-15" },
+    { name:"Narendra Meda", key:"old-high", oldId:"VBS26073", correctJoiningDate:"2025-07-27" },
+    { name:"Nikelesh Kumar B", key:"old-high", oldId:"VBS26074", correctJoiningDate:"2024-06-09" },
+    { name:"Nuthan Sagar M", key:"old-high", oldId:"VBS26075", correctJoiningDate:"2024-06-02" },
+    { name:"Pranav G", key:"old-high", oldId:"VBS26076", correctJoiningDate:"2025-05-18" },
+    { name:"Pranav R Kavatekar", key:"old-high", oldId:"VBS26077", correctJoiningDate:"2025-06-22" },
+    { name:"Purushottam S Murthy", key:"old-high", oldId:"VBS26078", correctJoiningDate:"2025-07-13" },
+    { name:"Rachith N S", key:"old-high", oldId:"VBS26079", correctJoiningDate:"2024-06-09" },
+    { name:"Raghava C S", key:"old-high", oldId:"VBS26080", correctJoiningDate:"2025-06-15" },
+    { name:"Rakshith S", key:"old-high", oldId:"VBS26081", correctJoiningDate:"2025-07-06" },
+    { name:"Rohan J C", key:"old-high", oldId:"VBS26082", correctJoiningDate:"2023-06-04" },
+    { name:"Rudraansh Nagabushi", key:"old-high", oldId:"VBS26083", correctJoiningDate:"2025-06-29" },
+    { name:"Sai Eshwar R S", key:"old-high", oldId:"VBS26084", correctJoiningDate:"2023-06-11" },
+    { name:"Sai Sheshadri S N", key:"old-high", oldId:"VBS26085", correctJoiningDate:"2025-08-17" },
+    { name:"Sai Vibhumai T S", key:"old-high", oldId:"VBS26086", correctJoiningDate:"2025-06-01" },
+    { name:"Samanyu Hoysala S", key:"old-high", oldId:"VBS26087", correctJoiningDate:"2025-05-18" },
+    { name:"Shankar Narayan U", key:"old-high", oldId:"VBS26088", correctJoiningDate:"2024-06-02" },
+    { name:"Shibhijeeth Bharadwaj H", key:"old-high", oldId:"VBS26089", correctJoiningDate:"2023-07-02" },
+    { name:"Shreyas A V", key:"old-high", oldId:"VBS26090", correctJoiningDate:"2024-06-09" },
+    { name:"Skanda S M", key:"old-high", oldId:"VBS26091", correctJoiningDate:"2022-09-04" },
+    { name:"Srikanta Ravishankar", key:"old-high", oldId:"VBS26092", correctJoiningDate:"2024-06-02" },
+    { name:"Sughosh S M", key:"old-high", oldId:"VBS26093", correctJoiningDate:"2023-07-09" },
+    { name:"Sumukh Arun", key:"old-high", oldId:"VBS26094", correctJoiningDate:"2024-06-02" },
+    { name:"Svanik G", key:"old-high", oldId:"VBS26095", correctJoiningDate:"2023-07-02" },
+    { name:"Satvik R", key:"old-high", oldId:"VBS26096", correctJoiningDate:"2025-08-10" },
+    { name:"Tejas S V", key:"old-high", oldId:"VBS26097", correctJoiningDate:"2025-05-18" },
+    { name:"Thanush Krishna P S", key:"old-high", oldId:"VBS26098", correctJoiningDate:"2024-06-09" },
+    { name:"Ujwal S", key:"old-high", oldId:"VBS26099", correctJoiningDate:"2024-06-02" },
+    { name:"Uthkarsh S", key:"old-high", oldId:"VBS26100", correctJoiningDate:"2024-06-02" },
+    { name:"Venkata Shreyas V", key:"old-high", oldId:"VBS26101", correctJoiningDate:"2025-07-20" },
+    { name:"Vibhu K Viralam", key:"old-high", oldId:"VBS26102", correctJoiningDate:"2024-06-09" },
+    { name:"Vimarsh C V", key:"old-high", oldId:"VBS26103", correctJoiningDate:"2024-10-06" },
+    { name:"Yashonidhi Bhat C N", key:"old-high", oldId:"VBS26104", correctJoiningDate:"2024-06-09" }
+  ];
+
+// Issue B (safe): 15 groups where a legacy migration collision gave an id
+// to more than one student, but the collision happened to fall across
+// DIFFERENT sections. Since attendance is keyed by section+date+id
+// together, these students' histories were never actually mixed — this is
+// a confusing duplicate LABEL, not merged data. Every member EXCEPT the
+// first keeps its history; the first keeps the existing id unchanged, the
+// rest get freshly reserved ids in the SAME year and their history is
+// re-keyed to match, with zero data loss.
+const REPAIR_SAFE_DUP_GROUPS = [
+    { oldId:"VBS25001", members:[{ name:"Akshay H S", key:"old-middle" }, { name:"Dhyan K Prasad", key:"old-high" }, { name:"Koushik G", key:"new-middle" }] },
+    { oldId:"VBS25002", members:[{ name:"Atharv Savvasere J", key:"old-middle" }, { name:"Hemanth Sakthi", key:"old-high" }, { name:"Lochana Krishna B S", key:"new-middle" }] },
+    { oldId:"VBS25003", members:[{ name:"Bhargav S Murthy", key:"old-middle" }, { name:"Himanth N", key:"old-high" }, { name:"Ritvik B R", key:"new-middle" }] },
+    { oldId:"VBS24001", members:[{ name:"Arya Vamshi G J", key:"old-middle" }, { name:"Eshwar P", key:"old-high" }] },
+    { oldId:"VBS25004", members:[{ name:"Bimal N", key:"old-middle" }, { name:"Jeevith Gowda S J", key:"old-high" }] },
+    { oldId:"VBS24002", members:[{ name:"Dhavan P", key:"old-middle" }, { name:"Gagan S M", key:"old-high" }] },
+    { oldId:"VBS25005", members:[{ name:"Gagan Deep M", key:"old-middle" }, { name:"Keshav M G", key:"old-high" }] },
+    { oldId:"VBS24003", members:[{ name:"Gourav A", key:"old-middle" }, { name:"Gautam S Kumar", key:"old-high" }] },
+    { oldId:"VBS25006", members:[{ name:"Havish V", key:"old-middle" }, { name:"Kritin Rao D", key:"old-high" }] },
+    { oldId:"VBS25007", members:[{ name:"Havish Vanka", key:"old-middle" }, { name:"Kushal Gowda M", key:"old-high" }] },
+    { oldId:"VBS25008", members:[{ name:"Ishaan Puranik", key:"old-middle" }, { name:"Likith Gowda K", key:"old-high" }] },
+    { oldId:"VBS25009", members:[{ name:"Krivish M", key:"old-middle" }, { name:"Likith R Gowda", key:"old-high" }] },
+    { oldId:"VBS25010", members:[{ name:"Mohith L", key:"old-middle" }, { name:"Madhan N", key:"old-high" }] },
+    { oldId:"VBS24004", members:[{ name:"Sohan M", key:"old-middle" }, { name:"Gyanendra M", key:"old-high" }] },
+    { oldId:"VBS24005", members:[{ name:"Vishnu Tej H S", key:"old-middle" }, { name:"Harsha V", key:"old-high" }] }
+  ];
+
+// Issue B (real corruption): 13 groups where the collision happened WITHIN
+// the same section — attendance is genuinely one shared record for every
+// member, confirmed identical on every date they overlap. There is no way
+// to know which person a shared P/A mark actually belongs to. Per your
+// decision: no one "keeps" the old id here — EVERY member gets a fresh
+// distinct id going forward, so there is no more collision from today on.
+// The disputed shared history stays parked under the OLD id, untouched —
+// not deleted, just no longer linked to either person's live profile. If
+// you want to manually reconcile any of it later (e.g. asking volunteers
+// who was actually present), the old id is preserved below for reference.
+const REPAIR_CORRUPTED_DUP_GROUPS = [
+    { oldId:"VBS25011", members:[{ name:"Narasimha R", key:"old-middle" }, { name:"Vishnu S", key:"old-middle" }] },
+    { oldId:"VBS22001", members:[{ name:"Aarya Smaran", key:"old-high" }, { name:"Dhruvanandan M J", key:"old-high" }] },
+    { oldId:"VBS24006", members:[{ name:"Abhinava Navada K G", key:"old-high" }, { name:"Harshavardhan R", key:"old-high" }] },
+    { oldId:"VBS24007", members:[{ name:"Abhiram B G", key:"old-high" }, { name:"Hithaish R", key:"old-high" }] },
+    { oldId:"VBS22002", members:[{ name:"Achyuth S R", key:"old-high" }, { name:"Jayanth Ram B N", key:"old-high" }] },
+    { oldId:"VBS23001", members:[{ name:"Aditya Sharma", key:"old-high" }, { name:"Ishaan Katta", key:"old-high" }] },
+    { oldId:"VBS22003", members:[{ name:"Advaith Aithal D P", key:"old-high" }, { name:"Kushal G H", key:"old-high" }] },
+    { oldId:"VBS22004", members:[{ name:"Advaya G", key:"old-high" }, { name:"Lok Niranjan R", key:"old-high" }] },
+    { oldId:"VBS23002", members:[{ name:"Amogh Sai V", key:"old-high" }, { name:"Lalith Devraj", key:"old-high" }] },
+    { oldId:"VBS24008", members:[{ name:"Bharatesh Gowda M", key:"old-high" }, { name:"Ichith V", key:"old-high" }] },
+    { oldId:"VBS24009", members:[{ name:"Bharath G R", key:"old-high" }, { name:"Krishna R B", key:"old-high" }] },
+    { oldId:"VBS24010", members:[{ name:"Bhuvan R", key:"old-high" }, { name:"Madav S", key:"old-high" }] },
+    { oldId:"VBS23003", members:[{ name:"Bhuvan S R", key:"old-high" }, { name:"Likith N", key:"old-high" }] }
+  ];
+
+function freshIdForYear(yearNum, takenIds){
+  const yearKey = String(yearNum % 100).padStart(2,'0');
+  const prefix = ID_PREFIXES.balaka; // all repair targets are Balaka Sangha school students
+  let serial = 1;
+  let candidate = prefix + yearKey + String(serial).padStart(3,'0');
+  while(takenIds.has(candidate)){
+    serial++;
+    candidate = prefix + yearKey + String(serial).padStart(3,'0');
+  }
+  return { id: candidate, yearKey, serial };
+}
+
+// Moves every attendance-record document (regular marks + tracker docs)
+// for oldId IN A SPECIFIC SECTION to newId. Scoped by section because some
+// of these old ids are shared by people in DIFFERENT sections (Issue B
+// safe groups) — without the section filter, re-keying one person's
+// records could accidentally sweep up and move a completely different
+// person's records too, since they currently share the same studentId text.
+async function repairMoveRecords(oldId, newId, section){
+  const snap = await recordsCollection.where('studentId','==', oldId).where('section','==', section).get();
+  if(snap.empty) return 0;
+  const docs = snap.docs;
+  const CHUNK = 200;
+  for(let start=0; start<docs.length; start+=CHUNK){
+    const batch = db.batch();
+    docs.slice(start, start+CHUNK).forEach(doc => {
+      const data = doc.data();
+      const internalKey = internalKeyFromDocId(doc.id);
+      const parts = internalKey.split('|');
+      parts[2] = newId;
+      const newDocId = firestoreDocIdFor(parts.join('|'));
+      batch.set(recordsCollection.doc(newDocId), { ...data, studentId: newId });
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+  }
+  return docs.length;
+}
+
+async function repairMovePendingCorrections(oldId, newId, section){
+  const snap = await correctionsCollection.where('studentId','==', oldId).where('section','==', section).where('status','==','pending').get();
+  for(const doc of snap.docs) await doc.ref.update({ studentId: newId });
+  return snap.size;
+}
+
+function findStudentInRoster(name, key){
+  const idx = (students[key]||[]).findIndex(s => s && typeof s==='object' && s.name === name);
+  return idx >= 0 ? idx : null;
+}
+
+async function runKnownIssueRepair(){
+  if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
+  if(!db || !recordsCollection || !correctionsCollection){ showToast('Not connected — try again shortly'); return; }
+
+  const totalCount = REPAIR_ISSUE_A.length
+    + REPAIR_SAFE_DUP_GROUPS.reduce((n,g)=>n+g.members.length-1, 0)
+    + REPAIR_CORRUPTED_DUP_GROUPS.reduce((n,g)=>n+g.members.length, 0);
+
+  if(!confirm(
+    `This is the one-time repair for the July 2026 export audit findings:\n\n` +
+    `• ${REPAIR_ISSUE_A.length} students with a corrupted joining date and wrong-year id (Old High School)\n` +
+    `• ${REPAIR_SAFE_DUP_GROUPS.length} safe duplicate-id groups (different sections, no data was actually mixed)\n` +
+    `• ${REPAIR_CORRUPTED_DUP_GROUPS.length} genuinely-merged duplicate-id groups — everyone in these gets a fresh id, old shared history stays parked, untouched\n\n` +
+    `About ${totalCount} id changes total. This can take a little while — don't close the app while it runs. Proceed?`
+  )) return;
+
+  const takenIds = new Set();
+  SEC_KEYS.forEach(key => (students[key]||[]).forEach(s => { if(s && typeof s==='object' && s.id) takenIds.add(s.id); }));
+  archivedStudents.forEach(a => { if(a && a.id) takenIds.add(a.id); });
+
+  setSyncStatus('syncing', 'Running repair...');
+  let recordsMoved = 0, correctionsMoved = 0, studentsFixed = 0, notFound = [];
+  const touchedSections = new Set();
+
+  try{
+    // --- Issue A: corrupted joining date + wrong-year id ---
+    for(const item of REPAIR_ISSUE_A){
+      const idx = findStudentInRoster(item.name, item.key);
+      if(idx === null || students[item.key][idx].id !== item.oldId){ notFound.push(item.name+' (Issue A)'); continue; }
+      const correctYear = parseInt(item.correctJoiningDate.slice(0,4), 10);
+      const result = freshIdForYear(correctYear, takenIds);
+      recordsMoved += await repairMoveRecords(item.oldId, result.id, item.key);
+      correctionsMoved += await repairMovePendingCorrections(item.oldId, result.id, item.key);
+      students[item.key][idx].id = result.id;
+      students[item.key][idx].joiningDate = item.correctJoiningDate;
+      takenIds.add(result.id);
+      touchedSections.add(item.key);
+      studentsFixed++;
+    }
+
+    // --- Issue B safe: first member keeps id, rest get fresh ids in the same year ---
+    for(const group of REPAIR_SAFE_DUP_GROUPS){
+      const yearKey = group.oldId.replace(/^(VBS|VYS)/, '').slice(0,2);
+      const yearNum = 2000 + parseInt(yearKey, 10);
+      for(let i=0; i<group.members.length; i++){
+        if(i === 0) continue; // first member keeps the existing id untouched
+        const m = group.members[i];
+        const idx = findStudentInRoster(m.name, m.key);
+        if(idx === null || students[m.key][idx].id !== group.oldId){ notFound.push(m.name+' (Issue B safe)'); continue; }
+        const result = freshIdForYear(yearNum, takenIds);
+        recordsMoved += await repairMoveRecords(group.oldId, result.id, m.key);
+        correctionsMoved += await repairMovePendingCorrections(group.oldId, result.id, m.key);
+        students[m.key][idx].id = result.id;
+        takenIds.add(result.id);
+        touchedSections.add(m.key);
+        studentsFixed++;
+      }
+    }
+
+    // --- Issue B corrupted: EVERY member gets a fresh id, old records left untouched ---
+    for(const group of REPAIR_CORRUPTED_DUP_GROUPS){
+      const yearKey = group.oldId.replace(/^(VBS|VYS)/, '').slice(0,2);
+      const yearNum = 2000 + parseInt(yearKey, 10);
+      for(const m of group.members){
+        const idx = findStudentInRoster(m.name, m.key);
+        if(idx === null || students[m.key][idx].id !== group.oldId){ notFound.push(m.name+' (Issue B corrupted)'); continue; }
+        const result = freshIdForYear(yearNum, takenIds);
+        // Deliberately NOT moving records here — the shared history under
+        // group.oldId is disputed and stays parked there, untouched.
+        students[m.key][idx].id = result.id;
+        takenIds.add(result.id);
+        touchedSections.add(m.key);
+        studentsFixed++;
+      }
+    }
+
+    await saveRosterChange({ sections: [...touchedSections], archived: false });
+
+    let msg = `✅ Repair complete: ${studentsFixed} id(s) fixed, ${recordsMoved} attendance record(s) moved, ${correctionsMoved} pending correction(s) updated.`;
+    if(notFound.length){
+      msg += `\n\n⚠️ ${notFound.length} entrie(s) could not be matched (name/id changed since the audit?):\n` + notFound.join('\n');
+    }
+    alert(msg);
+    renderCurrentSection();
+  }catch(e){
+    showToast('⚠️ Repair stopped partway due to an error: ' + e.message + ' — check what got done before re-running.');
+  }finally{
+    setSyncStatus('synced');
+  }
+}
+
 
 // One-time admin action: finds every student (active in any section, OR
 // archived/departed) still on the old long-form id, and for each one:
@@ -3736,8 +3998,15 @@ function handleBulkFile(event) {
       // in the preview showing anything had gone wrong.
       const parseDate = (raw) => {
         raw = (raw||'').toString().trim();
+        // Strip a leading apostrophe — Excel's own marker for "treat this
+        // cell as text, don't auto-convert it to a date" (people often add
+        // this deliberately to stop Excel reformatting their typed date).
+        // Some export paths carry that apostrophe through into the raw
+        // text value, which would otherwise make an otherwise-valid date
+        // fail to match either pattern below.
+        if(raw.startsWith("'")) raw = raw.slice(1).trim();
         if(!raw) return '';
-        let m = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); // YYYY-MM-DD
+        let m = raw.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/); // YYYY-MM-DD or YYYY/MM/DD
         if(m){
           const mo = parseInt(m[2],10), d = parseInt(m[3],10);
           if(mo>=1 && mo<=12 && d>=1 && d<=31) return m[1]+'-'+m[2].padStart(2,'0')+'-'+m[3].padStart(2,'0');
@@ -4339,16 +4608,19 @@ function renderApprovals(){
   const promoBox = document.getElementById('promotion-utility-box');
   const idMigrationBox = document.getElementById('id-migration-utility-box');
   const dupeCheckBox = document.getElementById('id-duplicate-check-box');
+  const repairBox = document.getElementById('known-issue-repair-box');
   if(currentUserRole!=='admin'){
     if(promoBox) promoBox.style.display = 'none';
     if(idMigrationBox) idMigrationBox.style.display = 'none';
     if(dupeCheckBox) dupeCheckBox.style.display = 'none';
+    if(repairBox) repairBox.style.display = 'none';
     el.innerHTML = '<div class="empty-state">Admin only.</div>';
     return;
   }
   if(promoBox) promoBox.style.display = 'block';
   if(idMigrationBox) idMigrationBox.style.display = 'block';
   if(dupeCheckBox) dupeCheckBox.style.display = 'block';
+  if(repairBox) repairBox.style.display = 'block';
 
   let html = '<h3 style="margin:6px 0 14px">🧑‍🎓 Pending Student Requests</h3>';
   if(!allPendingStudentRequests.length){
