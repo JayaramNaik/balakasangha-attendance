@@ -1,4 +1,4 @@
-const CACHE_NAME = 'balaka-v9';
+const CACHE_NAME = 'balaka-v10';
 
 // Derive BASE from the service worker's own location instead of hardcoding
 // '/balakasangha-attendance'. Previously, if this file were ever served from
@@ -16,7 +16,15 @@ const ASSETS = [
   BASE + '/Balakasangha_Enhanced.html',
   BASE + '/manifest.json',
   BASE + '/swamiji.jpg',
-  BASE + '/rkmission_logo.png'
+  BASE + '/rkmission_logo.png',
+  // The app's logic now lives in these 4 external files instead of being
+  // inlined in Balakasangha_Enhanced.html — they need to be listed here
+  // explicitly, or a fully-offline first load would fetch the HTML shell
+  // successfully but have none of its actual code available.
+  BASE + '/attendance.js',
+  BASE + '/ids-migrations.js',
+  BASE + '/bulk-import.js',
+  BASE + '/corrections.js'
 ];
 
 // Max time to wait for the network before falling back to cache on a
