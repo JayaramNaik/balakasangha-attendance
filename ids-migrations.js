@@ -222,30 +222,66 @@ async function findOrphanedAttendanceRecords(){
 }
 
 // ===================== APPLY ATTENDANCE RECONCILIATION =====================
-// Applies the admin's answers (from the "Attendance Recheck" spreadsheet)
-// for who was ACTUALLY present on a date where two people used to share an
-// id. Only covers entries that have a real answer — 14 of the 23 needed
-// date/pair entries are still blank (see chat), those are simply left
-// alone here, not guessed. Matches each name to its CURRENT (already
-// -unique, post-repair) id live at run time, so there's no risk of writing
-// to a stale/retired id.
+// Applies the admin's answers (from the "Attendance Recheck" spreadsheet,
+// FINAL version confirmed by Sharadh anna as of 25-Jul-2026) for who was
+// ACTUALLY present on a date where two people used to share an id. Matches
+// each name to its CURRENT (already-unique, post-repair) id live at run
+// time, so there's no risk of writing to a stale/retired id. Safe to
+// re-run — each run fully overwrites the same records, so a later,
+// corrected answer for something already applied (see pairs 12 and 13
+// below) simply replaces the earlier one, nothing needs to be undone
+// first.
 //
-// Two entries below (Advaith Aithal D P on 19-Jul, Bharatesh Gowda M on
-// 19-Jul) have an answer that CONTRADICTS what the shared record used to
-// say (recorded as Absent, but the admin says that person was actually
-// present) — meaning the original mark itself was wrong that day, not
-// just misattributed between two people. Flagged here and in the confirm
-// dialog so this gets a second look before running, in case of a typo.
+// STILL OUTSTANDING: Pair 1 (Narasimha R / Vishnu S, Old Middle School)
+// has no answer yet for 5-Jul or 12-Jul, despite the sheet being labeled
+// "FINAL" — those two dates are still genuinely unresolved and are simply
+// not included below, not guessed.
+//
+// flagContradiction:true marks an answer that CONTRADICTS what the shared
+// record used to say (e.g. recorded Absent, but the admin says that
+// person WAS present, or vice versa) — meaning the original mark itself
+// was wrong that day, not just misattributed between two people. All of
+// these are backed by an explicit "confirmed by Sharadh anna" remark in
+// the final sheet except pair 2's 12-Jul, which is flagged here for
+// visibility even though its remark doesn't use that exact phrase.
 const RECONCILIATION_ENTRIES = [
   { key:'old-middle', date:'2026-07-19', present:'Vishnu S', absent:'Narasimha R' },
-  { key:'old-high',   date:'2026-07-19', present:'Aarya Smaran', absent:'Dhruvanandan M J' },
-  { key:'old-high',   date:'2026-07-19', present:'Hithaish R', absent:'Abhiram B G' },
-  { key:'old-high',   date:'2026-07-19', present:'Advaith Aithal D P', absent:'Kushal G H', flagContradiction:true },
-  { key:'old-high',   date:'2026-07-19', bothAbsent:['Advaya G','Lok Niranjan R'] },
-  { key:'old-high',   date:'2026-07-19', bothAbsent:['Amogh Sai V','Lalith Devraj'] },
-  { key:'old-high',   date:'2026-07-19', present:'Bharatesh Gowda M', absent:'Ichith V', flagContradiction:true },
-  { key:'old-high',   date:'2026-07-19', present:'Bhuvan R', absent:'Madav S' },
-  { key:'old-high',   date:'2026-07-19', present:'Likith N', absent:'Bhuvan S R' }
+
+  { key:'old-high', date:'2026-07-12', present:'Dhruvanandan M J', absent:'Aarya Smaran', flagContradiction:true },
+  { key:'old-high', date:'2026-07-19', present:'Aarya Smaran', absent:'Dhruvanandan M J' },
+
+  { key:'old-high', date:'2026-07-12', present:'Abhinava Navada K G', absent:'Harshavardhan R' },
+  { key:'old-high', date:'2026-07-19', present:'Abhinava Navada K G', absent:'Harshavardhan R', flagContradiction:true },
+
+  { key:'old-high', date:'2026-07-12', present:'Abhiram B G', absent:'Hithaish R' },
+  { key:'old-high', date:'2026-07-19', present:'Hithaish R', absent:'Abhiram B G' },
+
+  { key:'old-high', date:'2026-07-12', bothAbsent:['Achyuth S R','Jayanth Ram B N'] },
+  { key:'old-high', date:'2026-07-19', bothAbsent:['Achyuth S R','Jayanth Ram B N'] },
+
+  { key:'old-high', date:'2026-07-12', bothAbsent:['Aditya Sharma','Ishaan Katta'] },
+  { key:'old-high', date:'2026-07-19', bothAbsent:['Aditya Sharma','Ishaan Katta'] },
+
+  { key:'old-high', date:'2026-07-12', present:'Advaith Aithal D P', absent:'Kushal G H' },
+  { key:'old-high', date:'2026-07-19', present:'Advaith Aithal D P', absent:'Kushal G H', flagContradiction:true },
+
+  { key:'old-high', date:'2026-07-12', bothAbsent:['Advaya G','Lok Niranjan R'] },
+  { key:'old-high', date:'2026-07-19', bothAbsent:['Advaya G','Lok Niranjan R'] },
+
+  { key:'old-high', date:'2026-07-12', bothAbsent:['Amogh Sai V','Lalith Devraj'] },
+  { key:'old-high', date:'2026-07-19', bothAbsent:['Amogh Sai V','Lalith Devraj'] },
+
+  { key:'old-high', date:'2026-07-19', present:'Bharatesh Gowda M', absent:'Ichith V', flagContradiction:true },
+
+  { key:'old-high', date:'2026-07-19', present:'Bharath G R', absent:'Krishna R B', flagContradiction:true },
+
+  // CORRECTED from the earlier draft answer ("Bhuvan R present") — the
+  // final sheet says Neither, confirmed by Sharadh anna.
+  { key:'old-high', date:'2026-07-19', bothAbsent:['Bhuvan R','Madav S'], flagContradiction:true },
+
+  // CORRECTED from the earlier draft answer ("Likith N present only") —
+  // the final sheet says Both were present.
+  { key:'old-high', date:'2026-07-19', bothPresent:['Bhuvan S R','Likith N'] }
 ];
 
 async function applyAttendanceReconciliation(){
@@ -254,12 +290,12 @@ async function applyAttendanceReconciliation(){
 
   const contradictionCount = RECONCILIATION_ENTRIES.filter(e => e.flagContradiction).length;
   if(!confirm(
-    `This applies the admin's confirmed answers for ${RECONCILIATION_ENTRIES.length} of the 23 disputed ` +
-    `date/pair entries — 14 still need someone's memory of an earlier Sunday and are left untouched.\n\n` +
-    (contradictionCount ? `⚠️ ${contradictionCount} of these CONTRADICT the originally recorded mark ` +
-    `(recorded absent, but the admin says that person WAS present that day) — double check these ` +
-    `aren't a typo before proceeding.\n\n` : '') +
-    `Proceed?`
+    `This applies the admin's confirmed FINAL answers for ${RECONCILIATION_ENTRIES.length} of the 23 disputed ` +
+    `date/pair entries. Pair 1 (Narasimha R / Vishnu S) still has no answer for 5-Jul or 12-Jul and is left untouched.\n\n` +
+    (contradictionCount ? `⚠️ ${contradictionCount} of these CONTRADICT the originally recorded mark — ` +
+    `most are explicitly confirmed in the sheet's remarks, but worth a glance if anything looks off.\n\n` : '') +
+    `Safe to run even if you already ran an earlier version of this — every entry is fully rewritten, ` +
+    `so a corrected answer simply replaces the old one.\n\nProceed?`
   )) return;
 
   setSyncStatus('syncing', 'Applying reconciliation...');
@@ -267,12 +303,12 @@ async function applyAttendanceReconciliation(){
   const notFound = [];
   try{
     for(const e of RECONCILIATION_ENTRIES){
-      const names = e.bothAbsent ? e.bothAbsent : [e.present, e.absent];
+      const names = e.bothAbsent || e.bothPresent || [e.present, e.absent];
       for(const name of names){
         const idx = (students[e.key]||[]).findIndex(s => s && typeof s==='object' && s.name === name);
         if(idx < 0){ notFound.push(name+' ('+e.key+')'); continue; }
         const id = idFor(e.key, idx);
-        const value = e.bothAbsent ? 'A' : (name === e.present ? 'P' : 'A');
+        const value = e.bothAbsent ? 'A' : e.bothPresent ? 'P' : (name === e.present ? 'P' : 'A');
         const recordKey = e.key+'|'+e.date+'|'+id;
         await recordsCollection.doc(firestoreDocIdFor(recordKey)).set({ v: value, section: e.key, date: e.date, studentId: id });
         records[recordKey] = value;
@@ -282,7 +318,7 @@ async function applyAttendanceReconciliation(){
     renderCurrentSection();
     let msg = `✅ Applied ${applied} corrected mark(s) for ${RECONCILIATION_ENTRIES.length} entries.`;
     if(notFound.length) msg += `\n\n⚠️ Could not find on the roster: ${notFound.join(', ')}`;
-    msg += `\n\n14 entries across pairs 1,2,3,4,5,6,7,8,9,11 still need an answer for 5-Jul and/or 12-Jul — send those back to the admin when you can.`;
+    msg += `\n\nOnly Pair 1's 5-Jul and 12-Jul marks are still unresolved — everything else from the disputed list is now applied.`;
     alert(msg);
   }catch(err){
     showToast('⚠️ Reconciliation stopped partway: ' + err.message);
