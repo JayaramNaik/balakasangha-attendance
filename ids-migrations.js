@@ -221,6 +221,150 @@ async function findOrphanedAttendanceRecords(){
   }
 }
 
+// ===================== FIX JOINING DATE & ID =====================
+// General-purpose, reusable tool (not a one-time historical fix like the
+// July 2026 repair below) for the exact mistake that keeps happening: a
+// student gets added with the WRONG joining date (often "today" used as a
+// placeholder when the real date isn't known yet at the moment of adding),
+// which means their id's embedded year is wrong too, since the id is
+// generated from whatever joining date was on record at that moment.
+//
+// Two distinct cases, handled differently:
+//   1. The CORRECTED year is the SAME as what their current id already
+//      shows — nothing about the id needs to change, only joiningDate is
+//      updated. No id churn, no record-moving, no risk.
+//   2. The CORRECTED year is DIFFERENT — a fresh id is generated for that
+//      year (checked against every id currently in use anywhere, exactly
+//      like the July 2026 repair's collision-safe logic), any attendance
+//      already marked for them under the OLD id is moved to the NEW id
+//      (nothing lost), and the live counter is reserved so a future normal
+//      add can never collide with the id just assigned here.
+// Every step is shown in a preview BEFORE anything is touched, and nothing
+// is deleted until the corresponding new copy is confirmed written.
+async function fixStudentJoiningDateAndId(){
+  if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
+  if(!db || !recordsCollection || !correctionsCollection){ showToast('Not connected — try again shortly'); return; }
+
+  const sectionOptions = SEC_KEYS.map((k,i) => `${i+1}. ${(SECTIONS[k]||{}).label || k}`).join('\n');
+  const sectionChoice = prompt(`Which section is the student in?\n\n${sectionOptions}\n\nEnter the number:`);
+  if(sectionChoice === null) return;
+  const sectionIdx = parseInt(sectionChoice, 10) - 1;
+  if(isNaN(sectionIdx) || !SEC_KEYS[sectionIdx]){ showToast('Invalid section choice — nothing changed'); return; }
+  const key = SEC_KEYS[sectionIdx];
+
+  const nameInput = prompt('Enter the student\'s exact name as shown on the roster:');
+  if(nameInput === null) return;
+  const idx = (students[key]||[]).findIndex(s => s && typeof s==='object' && s.name.trim().toLowerCase() === nameInput.trim().toLowerCase());
+  if(idx < 0){ showToast('Could not find "'+nameInput+'" in that section — check the spelling and section, nothing changed'); return; }
+  const student = students[key][idx];
+  const oldId = student.id;
+  const oldJoiningDate = student.joiningDate;
+
+  if(!oldId){ showToast(student.name + ' doesn\'t have an id yet — this tool is for fixing an EXISTING id, not assigning a first one. Nothing changed.'); return; }
+
+  const newDateRaw = prompt(
+    `${student.name}\nCurrent joining date: ${oldJoiningDate}\nCurrent id: ${oldId}\n\n` +
+    `Enter the CORRECT joining date as YYYY-MM-DD (e.g. 2025-06-15):`,
+    oldJoiningDate
+  );
+  if(newDateRaw === null) return;
+  const m = newDateRaw.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m){ showToast('Please enter the date exactly as YYYY-MM-DD, e.g. 2025-06-15 — nothing changed'); return; }
+  const newJoiningDate = newDateRaw.trim();
+  const newYear = parseInt(m[1], 10);
+  if(newYear < 1990 || newYear > 2100){ showToast('That year looks wrong — please double check. Nothing changed'); return; }
+
+  const idMatch = oldId.match(/^(VBS|VYS)(\d{2})(\d{3})$/);
+  if(!idMatch){ showToast(student.name + '\'s id ('+oldId+') isn\'t in the current short format — this tool only handles the current format. Nothing changed.'); return; }
+  const currentIdYear = 2000 + parseInt(idMatch[2], 10);
+  const program = idMatch[1] === 'VYS' ? 'yuvaka' : 'balaka';
+
+  // Case 1: year isn't actually changing — just fix the date, id stays as-is.
+  if(currentIdYear === newYear){
+    if(!confirm(`This updates ${student.name}'s joining date to ${newJoiningDate}.\n\nTheir id (${oldId}) already matches this year, so it stays exactly as it is — nothing else changes. Proceed?`)) return;
+    student.joiningDate = newJoiningDate;
+    try{
+      await saveRosterChange({ sections: [key] });
+      showToast(`✅ Updated ${student.name}'s joining date to ${newJoiningDate}. Id unchanged (${oldId}).`);
+      renderCurrentSection();
+    }catch(e){
+      showToast('⚠️ Failed to save: ' + e.message + ' — nothing was changed.');
+    }
+    return;
+  }
+
+  // Case 2: the year is genuinely changing — needs a fresh, collision-free
+  // id, exactly like the July 2026 repair's logic.
+  const takenIds = new Set();
+  SEC_KEYS.forEach(k => (students[k]||[]).forEach(s => { if(s && typeof s==='object' && s.id) takenIds.add(s.id); }));
+  archivedStudents.forEach(a => { if(a && a.id) takenIds.add(a.id); });
+
+  const yearKey = String(newYear % 100).padStart(2,'0');
+  const prefix = ID_PREFIXES[program];
+  let serial = 1;
+  let newId = prefix + yearKey + String(serial).padStart(3,'0');
+  while(takenIds.has(newId)){
+    serial++;
+    newId = prefix + yearKey + String(serial).padStart(3,'0');
+  }
+
+  if(!confirm(
+    `${student.name}:\n\n` +
+    `Joining date: ${oldJoiningDate}  →  ${newJoiningDate}\n` +
+    `Id: ${oldId}  →  ${newId}\n\n` +
+    `Any attendance already marked for them will be moved to the new id — nothing will be lost. ` +
+    `The new id was checked against everyone currently on the roster, so there's no risk of it ` +
+    `colliding with anyone else. Proceed?`
+  )) return;
+
+  setSyncStatus('syncing', 'Fixing joining date and id...');
+  try{
+    // Move any existing attendance records, scoped to this section (same
+    // safety precaution the July 2026 repair tool uses — a shared id text
+    // elsewhere shouldn't be able to sweep in someone else's records).
+    const snap = await recordsCollection.where('studentId','==', oldId).where('section','==', key).get();
+    let recordsMoved = 0;
+    if(!snap.empty){
+      const batch = db.batch();
+      snap.docs.forEach(doc => {
+        const data = doc.data();
+        const internalKey = internalKeyFromDocId(doc.id);
+        const parts = internalKey.split('|');
+        parts[2] = newId;
+        const newDocId = firestoreDocIdFor(parts.join('|'));
+        batch.set(recordsCollection.doc(newDocId), { ...data, studentId: newId });
+        batch.delete(doc.ref);
+      });
+      await batch.commit();
+      recordsMoved = snap.docs.length;
+    }
+
+    // Move any still-pending correction too.
+    const pendingSnap = await correctionsCollection.where('studentId','==', oldId).where('section','==', key).where('status','==','pending').get();
+    let correctionsMoved = 0;
+    for(const doc of pendingSnap.docs){ await doc.ref.update({ studentId: newId }); correctionsMoved++; }
+
+    // Update the roster entry itself.
+    student.id = newId;
+    student.joiningDate = newJoiningDate;
+    await saveRosterChange({ sections: [key] });
+
+    // Reserve the counter so a future normal add can never be handed this
+    // exact id.
+    await reserveMinSerial(program, yearKey, serial + 1);
+
+    let msg = `✅ Fixed! ${student.name} is now ${newId}, joined ${newJoiningDate}.`;
+    if(recordsMoved) msg += ` ${recordsMoved} attendance record(s) moved safely to the new id.`;
+    if(correctionsMoved) msg += ` ${correctionsMoved} pending correction(s) updated too.`;
+    showToast(msg);
+    renderCurrentSection();
+  }catch(e){
+    showToast('⚠️ Something went wrong partway through: ' + e.message + ' — check the roster before retrying, nothing was deleted before the point it failed.');
+  }finally{
+    setSyncStatus('synced');
+  }
+}
+
 // ===================== APPLY ATTENDANCE RECONCILIATION =====================
 // Applies the admin's answers (from the "Attendance Recheck" spreadsheet,
 // FINAL version confirmed by Sharadh anna as of 25-Jul-2026) for who was
