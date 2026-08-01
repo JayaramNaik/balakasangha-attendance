@@ -234,6 +234,19 @@ let currentUserRole='volunteer'; // 'admin', 'volunteer', or 'pending' (awaiting
 let currentUserIsBackend=false;
 let currentUserStatus='approved'; // 'approved', 'pending', or 'rejected' — drives currentUserRole above
 let currentUserName='';
+// Shared between initFirebase()'s onAuthStateChanged listener and
+// registerUser() — a brand-new self-registration briefly triggers
+// onAuthStateChanged before registerUser() has finished writing the new
+// account's pending-status doc, which would otherwise let
+// onAuthStateChanged show the full volunteer interface to someone not yet
+// approved. This flag tells onAuthStateChanged "ignore this sign-in
+// event, registerUser()'s own flow already owns it." MUST be declared
+// here, at true top level — declaring it inside initFirebase() (as it
+// once was) makes it local to that function only; registerUser() would
+// then be silently writing to an unrelated accidental global of the same
+// name instead of the one onAuthStateChanged actually reads, and the
+// guard would never work at all.
+let isRegisteringNewAccount = false;
 let stateDoc=null;
 let adminsDoc=null;
 let volunteersDoc=null;
@@ -476,7 +489,8 @@ async function initFirebase(){
 // shows the full volunteer interface to a brand-new, not-yet-approved
 // registrant. This flag makes onAuthStateChanged simply ignore that
 // transient sign-in event entirely; registerUser() is already handling it.
-let isRegisteringNewAccount = false;
+// (Declared once, at true top level near the other shared session-state
+// variables — see the comment there for why it can't be declared here.)
 
     auth.onAuthStateChanged(async user=>{
       currentUser = user;

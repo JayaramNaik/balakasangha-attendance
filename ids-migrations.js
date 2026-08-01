@@ -174,6 +174,19 @@ async function syncIdCountersToRoster(){
 // retired ids from the July 2026 repair (deliberately left parked, pending
 // your manual reconciliation) — anything else found here is new
 // information, not something already accounted for.
+// The 13 pairs' old ids, deliberately retired by the July 2026 repair when
+// every member of a genuinely-merged pair got a fresh id — old, disputed
+// attendance history still sits under these in Firestore even though no
+// one currently holds them as their live .id. Shared by
+// findOrphanedAttendanceRecords() (where seeing these is EXPECTED, not a
+// new finding) and fixStudentJoiningDateAndId() (where a student ending up
+// on one of these — as happened once already — needs forcing off it, not
+// treated as a normal, safely-reusable free number).
+const KNOWN_RETIRED_IDS = new Set([
+  'VBS25011','VBS22001','VBS24006','VBS24007','VBS22002','VBS23001','VBS22003',
+  'VBS22004','VBS23002','VBS24008','VBS24009','VBS24010','VBS23003'
+]);
+
 async function findOrphanedAttendanceRecords(){
   if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
   if(!db || !recordsCollection){ showToast('Not connected — try again shortly'); return; }
@@ -181,13 +194,6 @@ async function findOrphanedAttendanceRecords(){
   const knownIds = new Set();
   SEC_KEYS.forEach(key => (students[key]||[]).forEach(s => { if(s && typeof s==='object' && s.id) knownIds.add(s.id); }));
   archivedStudents.forEach(a => { if(a && a.id) knownIds.add(a.id); });
-
-  // The 13 pairs' old ids, deliberately retired by the July 2026 repair —
-  // orphaned records under these are EXPECTED, not a new finding.
-  const knownRetiredIds = new Set([
-    'VBS25011','VBS22001','VBS24006','VBS24007','VBS22002','VBS23001','VBS22003',
-    'VBS22004','VBS23002','VBS24008','VBS24009','VBS24010','VBS23003'
-  ]);
 
   setSyncStatus('syncing', 'Scanning attendance records...');
   try{
@@ -200,8 +206,8 @@ async function findOrphanedAttendanceRecords(){
       }
     });
 
-    const expectedIds = Object.keys(byId).filter(id => knownRetiredIds.has(id));
-    const unexpectedIds = Object.keys(byId).filter(id => !knownRetiredIds.has(id));
+    const expectedIds = Object.keys(byId).filter(id => KNOWN_RETIRED_IDS.has(id));
+    const unexpectedIds = Object.keys(byId).filter(id => !KNOWN_RETIRED_IDS.has(id));
 
     let msg = `Scanned ${snap.size} attendance record(s) total.\n\n`;
     msg += `${expectedIds.length} orphaned id(s) are the known retired ids from the July 2026 repair `
@@ -241,6 +247,102 @@ async function findOrphanedAttendanceRecords(){
 //      add can never collide with the id just assigned here.
 // Every step is shown in a preview BEFORE anything is touched, and nothing
 // is deleted until the corresponding new copy is confirmed written.
+// ===================== FIX ORPHANED LEGACY-FORMAT RECORDS =====================
+// After migrateLegacyIdsToShortFormat() runs, the roster itself has ZERO
+// legacy-format (R53VBS.../R53VYS...) ids left — every student's .id was
+// updated to the short format. So any attendance-record document that
+// STILL carries a legacy-format studentId is, by definition, orphaned —
+// nothing on the roster points to it anymore.
+//
+// The most likely cause: a browser tab that already had a student's OLD id
+// loaded in memory before the migration ran, then marked their attendance
+// afterward — writing under the stale id, independent of the migration
+// (which only touches what's in Firestore at the moment it runs, not
+// another already-open tab's memory).
+//
+// For each one found, this computes the DETERMINISTIC short-format
+// equivalent (same year + same serial, just reformatted — see shortIdFor
+// below) and checks whether a student CURRENTLY on the roster actually
+// holds that exact id. If yes, that's a high-confidence match — the
+// record is moved there. If no current student holds it (e.g. because
+// their migration happened to hit a collision and they were bumped to a
+// different serial), it's left alone and reported separately rather than
+// guessed at.
+async function findAndFixOrphanedLegacyRecords(){
+  if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
+  if(!db || !recordsCollection){ showToast('Not connected — try again shortly'); return; }
+
+  setSyncStatus('syncing', 'Scanning for orphaned legacy-format records...');
+  try{
+    const snap = await recordsCollection.get();
+    const legacyDocs = snap.docs.filter(doc => {
+      const sid = doc.data().studentId;
+      return sid && (sid.startsWith(LEGACY_ID_PREFIXES.balaka) || sid.startsWith(LEGACY_ID_PREFIXES.yuvaka));
+    });
+
+    if(!legacyDocs.length){
+      alert('✅ Scanned ' + snap.size + ' attendance record(s) — no orphaned legacy-format records found. Nothing to fix.');
+      setSyncStatus('synced');
+      return;
+    }
+
+    const idToOwner = {};
+    SEC_KEYS.forEach(key => (students[key]||[]).forEach(s => { if(s && typeof s==='object' && s.id) idToOwner[s.id] = s.name; }));
+    archivedStudents.forEach(a => { if(a && a.id) idToOwner[a.id] = a.name + ' (archived)'; });
+
+    const plan = []; // { doc, oldId, newId, ownerName }
+    const unresolved = [];
+    for(const doc of legacyDocs){
+      const oldId = doc.data().studentId;
+      const result = shortIdFor(oldId, new Set()); // empty takenIds = the natural reformat, no bumping
+      const naturalId = result ? result.id : null;
+      if(naturalId && idToOwner[naturalId]){
+        plan.push({ doc, oldId, newId: naturalId, ownerName: idToOwner[naturalId] });
+      } else {
+        unresolved.push(oldId);
+      }
+    }
+
+    if(!plan.length){
+      alert(`Found ${legacyDocs.length} orphaned legacy-format record(s), but couldn't confidently match any of them to a current student — these need manual review, not an automatic fix.\n\nIds: ${[...new Set(unresolved)].join(', ')}`);
+      setSyncStatus('synced');
+      return;
+    }
+
+    const preview = plan.map(p => `${p.oldId}  →  ${p.newId}  (${p.ownerName})`).join('\n');
+    let msg = `Found ${plan.length} orphaned legacy-format record(s) that can be safely matched to a current student:\n\n${preview}\n\n`;
+    if(unresolved.length) msg += `⚠️ ${[...new Set(unresolved)].length} more could NOT be confidently matched and are left untouched for manual review: ${[...new Set(unresolved)].join(', ')}\n\n`;
+    msg += `Each one will be moved to its correct owner's current id — nothing is deleted until the corrected copy is successfully written first. Proceed?`;
+
+    if(!confirm(msg)){ setSyncStatus('synced'); return; }
+
+    let fixed = 0;
+    for(const p of plan){
+      const data = p.doc.data();
+      const internalKey = internalKeyFromDocId(p.doc.id);
+      const parts = internalKey.split('|');
+      parts[2] = p.newId;
+      const newDocId = firestoreDocIdFor(parts.join('|'));
+      await recordsCollection.doc(newDocId).set({ ...data, studentId: p.newId });
+      await p.doc.ref.delete();
+      fixed++;
+    }
+
+    showToast(`✅ Fixed ${fixed} orphaned legacy-format record(s).` + (unresolved.length ? ` ${[...new Set(unresolved)].length} left for manual review.` : ''));
+  }catch(e){
+    showToast('⚠️ Scan/fix failed: ' + e.message);
+  }finally{
+    setSyncStatus('synced');
+  }
+}
+
+// ===================== FIX JOINING DATE & ID =====================
+// General-purpose, reusable tool (not a one-time historical fix like the
+// July 2026 repair below) for the exact mistake that keeps happening: a
+// student gets added with the WRONG joining date (often "today" used as a
+// placeholder when the real date isn't known yet at the moment of adding),
+// which means their id's embedded year is wrong too, since the id is
+// generated from whatever joining date was on record at that moment.
 async function fixStudentJoiningDateAndId(){
   if(currentUserRole !== 'admin'){ showToast('Only admins can run this'); return; }
   if(!db || !recordsCollection || !correctionsCollection){ showToast('Not connected — try again shortly'); return; }
@@ -279,6 +381,51 @@ async function fixStudentJoiningDateAndId(){
   const currentIdYear = 2000 + parseInt(idMatch[2], 10);
   const program = idMatch[1] === 'VYS' ? 'yuvaka' : 'balaka';
 
+  // KNOWN_RETIRED_IDS: the 13 pairs' old ids, deliberately abandoned by the
+  // July 2026 repair — old, disputed attendance history still sits under
+  // these in Firestore even though nobody currently holds them as their
+  // .id. If a student somehow ends up assigned one of these (as happened
+  // once already — see the fix to Case 2 below), force a reassignment
+  // here regardless of whether their year otherwise looks "correct" for
+  // that number, since the number itself is contaminated, not just the year.
+  if(KNOWN_RETIRED_IDS.has(oldId)){
+    if(!confirm(
+      `⚠️ ${student.name}'s current id (${oldId}) is one of the 13 ids retired by the July 2026 repair — ` +
+      `old, disputed attendance history from an unrelated situation still exists under this id in Firestore. ` +
+      `This will give them a completely fresh id instead, and update their joining date to ${newJoiningDate}. Proceed?`
+    )) return;
+    const forcedNewId = await generateStudentId(newJoiningDate, program);
+    setSyncStatus('syncing', 'Reassigning away from a retired id...');
+    try{
+      const snap = await recordsCollection.where('studentId','==', oldId).where('section','==', key).get();
+      let recordsMoved = 0;
+      if(!snap.empty){
+        const batch = db.batch();
+        snap.docs.forEach(doc => {
+          const data = doc.data();
+          const internalKey = internalKeyFromDocId(doc.id);
+          const parts = internalKey.split('|');
+          parts[2] = forcedNewId;
+          const newDocId = firestoreDocIdFor(parts.join('|'));
+          batch.set(recordsCollection.doc(newDocId), { ...data, studentId: forcedNewId });
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
+        recordsMoved = snap.docs.length;
+      }
+      student.id = forcedNewId;
+      student.joiningDate = newJoiningDate;
+      await saveRosterChange({ sections: [key] });
+      showToast(`✅ ${student.name} moved off the retired id to ${forcedNewId}. ${recordsMoved} of their own attendance record(s) moved with them.`);
+      renderCurrentSection();
+    }catch(e){
+      showToast('⚠️ Failed partway: ' + e.message + ' — check the roster before retrying.');
+    }finally{
+      setSyncStatus('synced');
+    }
+    return;
+  }
+
   // Case 1: year isn't actually changing — just fix the date, id stays as-is.
   if(currentIdYear === newYear){
     if(!confirm(`This updates ${student.name}'s joining date to ${newJoiningDate}.\n\nTheir id (${oldId}) already matches this year, so it stays exactly as it is — nothing else changes. Proceed?`)) return;
@@ -293,28 +440,28 @@ async function fixStudentJoiningDateAndId(){
     return;
   }
 
-  // Case 2: the year is genuinely changing — needs a fresh, collision-free
-  // id, exactly like the July 2026 repair's logic.
-  const takenIds = new Set();
-  SEC_KEYS.forEach(k => (students[k]||[]).forEach(s => { if(s && typeof s==='object' && s.id) takenIds.add(s.id); }));
-  archivedStudents.forEach(a => { if(a && a.id) takenIds.add(a.id); });
-
-  const yearKey = String(newYear % 100).padStart(2,'0');
-  const prefix = ID_PREFIXES[program];
-  let serial = 1;
-  let newId = prefix + yearKey + String(serial).padStart(3,'0');
-  while(takenIds.has(newId)){
-    serial++;
-    newId = prefix + yearKey + String(serial).padStart(3,'0');
-  }
+  // Case 2: the year is genuinely changing — needs a fresh id.
+  //
+  // FIXED (was a real bug): this used to build a set of every id currently
+  // VISIBLE on the roster and linear-scan from 001 upward for the first
+  // one not in that set. That looked safe, but it isn't — it has no way
+  // of knowing about ids that were deliberately RETIRED by a past repair
+  // (e.g. the July 2026 repair's 13 disputed pairs) and no longer belong
+  // to anyone's live profile, even though old attendance history still
+  // sits under them in Firestore. A retired id looks indistinguishable
+  // from a "genuinely never used" one to a scan that only checks the
+  // current roster — so it could resurrect one and silently attach a
+  // brand new, unrelated student to someone else's old disputed history.
+  // generateStudentId() is the SAME atomic counter every normal add and
+  // bulk import already uses — it can only ever move forward, never
+  // revisit an old number, which is exactly what avoids this.
+  const newId = await generateStudentId(newJoiningDate, program);
 
   if(!confirm(
     `${student.name}:\n\n` +
     `Joining date: ${oldJoiningDate}  →  ${newJoiningDate}\n` +
     `Id: ${oldId}  →  ${newId}\n\n` +
-    `Any attendance already marked for them will be moved to the new id — nothing will be lost. ` +
-    `The new id was checked against everyone currently on the roster, so there's no risk of it ` +
-    `colliding with anyone else. Proceed?`
+    `Any attendance already marked for them will be moved to the new id — nothing will be lost. Proceed?`
   )) return;
 
   setSyncStatus('syncing', 'Fixing joining date and id...');
@@ -349,9 +496,18 @@ async function fixStudentJoiningDateAndId(){
     student.joiningDate = newJoiningDate;
     await saveRosterChange({ sections: [key] });
 
-    // Reserve the counter so a future normal add can never be handed this
-    // exact id.
-    await reserveMinSerial(program, yearKey, serial + 1);
+    // NOTE: no separate counter-reservation step needed here (unlike the
+    // retired-id case above, or runKnownIssueRepair/migrateLegacyIdsToShortFormat
+    // elsewhere in this file) — those compute a replacement id via a
+    // linear scan that never touches the atomic counter, so they DO need
+    // an explicit catch-up step afterward. newId here came from
+    // generateStudentId(), which already reserved it safely through
+    // nextSerial()'s own atomic transaction the moment it was generated —
+    // reserving it again would be redundant even if it referenced valid
+    // variables, which it previously didn't (this used to call
+    // reserveMinSerial(program, yearKey, serial + 1) with yearKey and
+    // serial never declared anywhere in this function — a guaranteed
+    // ReferenceError on every real use of this exact code path).
 
     let msg = `✅ Fixed! ${student.name} is now ${newId}, joined ${newJoiningDate}.`;
     if(recordsMoved) msg += ` ${recordsMoved} attendance record(s) moved safely to the new id.`;
