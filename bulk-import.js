@@ -6,7 +6,7 @@ function openBulkImport(key) {
   const profession = isProfessionSection(key);
   document.getElementById('bulk-import-title').textContent = profession ? '📥 Bulk Import Volunteers' : '📥 Bulk Import Students';
   document.getElementById('bulk-columns-hint').textContent = profession
-    ? 'Columns: Name, Type (Profession/Education), Detail, Joining Date, Joined Via (Directly / VBS — optional, defaults to Directly)'
+    ? 'Columns: Name, Type (Profession/Education), Detail, Joining Date (DD-MM-YYYY, or just a year like 2015 if the exact date is unknown), Joined Via (Directly / VBS — optional, defaults to Directly)'
     : 'Columns: Name, Class, Joining Date';
   document.getElementById('bulk-secondary-col-header').textContent = secondaryFieldLabel(key);
   // "Joined Via" only applies to Yuvaka Sangha imports — same reasoning as
@@ -32,8 +32,13 @@ function downloadTemplate() {
       ['Name', 'Type', 'Detail', 'Joining Date', 'Joined Via'],
       ['Ramesh Rao', 'Profession', 'Software Engineer', '22-06-2026', 'Directly'],
       ['Anjali Bhat', 'Education', 'B.Com 2nd Year', '22-06-2026', 'VBS'],
+      ['Suresh Kumar', 'Profession', 'Business', '2015', 'VBS'],
     ]);
     ws['!cols'] = [{wch:25},{wch:12},{wch:22},{wch:15},{wch:12}];
+    // Row 4 is deliberate — shows that for senior volunteers whose exact
+    // joining date isn't known, a bare 4-digit year (just "2015", no day
+    // or month) is a valid Joining Date value on its own, not something
+    // that needs a placeholder day tacked on.
     XLSX.utils.book_append_sheet(wb, ws, 'Volunteers');
     XLSX.writeFile(wb, 'YuvakaSangha_Volunteer_Template.xlsx');
   } else {
@@ -104,6 +109,26 @@ function handleBulkFile(event) {
           // silently accepting a nonsense month.
           if(mo>=1 && mo<=12 && d>=1 && d<=31) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
           return null;
+        }
+        // Bare 4-digit year — for senior Yuvaka Sangha volunteers whose
+        // exact joining day and month were never recorded, only the
+        // approximate year. Deliberately gated to `profession` (i.e. this
+        // being a Yuvaka Sangha import) — VBS students always have a known
+        // exact joining date, so a bare year here should stay an error for
+        // them, same as before. `profession` is available via closure from
+        // handleBulkFile() above. Returned as the plain year string,
+        // unchanged — everywhere else that reads joiningDate (fmtDisplay,
+        // studentIdYearPart, the Edit modal) is already built to recognize
+        // this exact same shape, so nothing downstream needs to treat it as
+        // a special case beyond this point.
+        if(profession){
+          m = raw.match(/^(\d{4})$/);
+          if(m){
+            const yearNum = parseInt(m[1],10);
+            const nowYear = new Date().getFullYear();
+            if(yearNum>=1950 && yearNum<=nowYear) return m[1];
+            return null;
+          }
         }
         return null; // unrecognized shape — flagged as an error downstream, never guessed
       };
@@ -232,7 +257,7 @@ function handleBulkFile(event) {
           if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
           else if (!type) { status = '⚠️ Type must be Profession or Education'; valid = false; errors.push(`Row ${rowNum}: Invalid type "${r.type}"`); }
           else if (!detail) { status = '⚠️ Detail is required'; valid = false; errors.push(`Row ${rowNum}: Missing detail`); }
-          else if (r.joiningDate === null) { status = '⚠️ Could not understand Joining Date "'+r.joiningDateRaw+'" (use DD-MM-YYYY)'; valid = false; errors.push(`Row ${rowNum}: Invalid Joining Date "${r.joiningDateRaw}" — use DD-MM-YYYY`); }
+          else if (r.joiningDate === null) { status = '⚠️ Could not understand Joining Date "'+r.joiningDateRaw+'" (use DD-MM-YYYY, or just a 4-digit year like 2015 if the exact date isn\'t known)'; valid = false; errors.push(`Row ${rowNum}: Invalid Joining Date "${r.joiningDateRaw}" — use DD-MM-YYYY, or a bare year like 2015`); }
           else if (joinedVia.origin === null) { status = '⚠️ Joined Via must be Directly or VBS'; valid = false; errors.push(`Row ${rowNum}: Invalid "Joined Via" value "${r.joinedVia}"`); }
 
           previewRows.push({ name, secondary: valid ? type+': '+detail : (r.type||'—'), joining, origin: joinedVia.label, status, valid });

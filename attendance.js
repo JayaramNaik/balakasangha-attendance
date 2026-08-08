@@ -839,8 +839,48 @@ function getSundays(year,month){
   return res;
 }
 function fmtDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
-// Display format DD-MM-YYYY (for showing to users)
-function fmtDisplay(ds){if(!ds)return '';const[y,m,d]=ds.split('-');return `${d}-${m}-${y}`;}
+// Display format DD-MM-YYYY (for showing to users). Handles a bare 4-digit
+// year (e.g. "2015") as a distinct, valid case — for senior volunteers whose
+// exact joining day/month isn't known, only the year. Splitting that on '-'
+// would give y="2015", m=undefined, d=undefined, producing the literal text
+// "undefined-undefined-2015" — the exact corruption class fixed in the July
+// 2026 repair (a different bug, same root cause: assuming every joiningDate
+// is a full YYYY-MM-DD string without checking first). The catch-all at the
+// end is deliberate too: if the shape is ever something else unexpected,
+// return it as-is rather than fabricate another undefined-laced string.
+function fmtDisplay(ds){
+  if(!ds) return '';
+  if(/^\d{4}$/.test(ds)) return ds; // year-only — nothing to reorder, show as-is
+  const[y,m,d]=ds.split('-');
+  if(!y || !m || !d) return ds;
+  return `${d}-${m}-${y}`;
+}
+
+// Reads the joining-date value from either the Add or Edit modal, whichever
+// of the two entry modes (full date picker vs year-only number field) is
+// actually the active one for that modal right now. idPrefix is
+// 'modal-student' for Add, 'edit-student' for Edit — matches each modal's
+// existing element-id convention. A native <input type="date"> already
+// returns a plain YYYY-MM-DD string with no reformatting needed; the
+// year-only path returns just the 4-digit year string, exactly as
+// fmtDisplay(), studentIdYearPart(), and everywhere else that reads
+// joiningDate already expects to receive it.
+function readJoiningDateInput(idPrefix){
+  const yearOnlyCb = document.getElementById(idPrefix+'-joining-yearonly');
+  const isYearOnly = yearOnlyCb ? yearOnlyCb.checked : false;
+  if(isYearOnly){
+    const yearRaw = document.getElementById(idPrefix+'-joining-year').value.trim();
+    if(!yearRaw) return { value: '', error: null }; // empty — valid on its own; caller decides if it's required
+    if(!/^\d{4}$/.test(yearRaw)) return { value: null, error: 'Enter a valid 4-digit year' };
+    const yearNum = parseInt(yearRaw, 10);
+    const nowYear = new Date().getFullYear();
+    if(yearNum < 1950 || yearNum > nowYear) return { value: null, error: `Year must be between 1950 and ${nowYear}` };
+    return { value: yearRaw, error: null };
+  }
+  const dateVal = document.getElementById(idPrefix+'-joining').value;
+  return { value: dateVal, error: null }; // empty is valid here too — caller enforces "required" if it needs to
+}
+
 function fmtShort(ds){const[,m,d]=ds.split('-').map(Number);return d+' '+MONTHS[m-1].slice(0,3);}
 function fmtFull(ds){const[y,m,d]=ds.split('-').map(Number);return new Date(y,m-1,d,12).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'});}
 function getCurrentTime(){
@@ -1259,11 +1299,31 @@ function openAddStudentModal(key){
   // "Joined via" only makes sense for Yuvaka Sangha — a VBS-side add is
   // always, by definition, a fresh VBS join.
   document.getElementById('add-origin-group').style.display = (key === 'yuvaka-sangha') ? 'block' : 'none';
+  // Year-only joining date is a Yuvaka Sangha thing only (see
+  // toggleEditFieldGroup's comment for the reasoning) — reset it fresh
+  // every time this modal opens, since it's always a brand-new add, never
+  // pre-populated from an existing student the way Edit is.
+  document.getElementById('add-joining-yearonly-wrap').style.display = profession ? 'block' : 'none';
+  document.getElementById('modal-student-joining-yearonly').checked = false;
+  document.getElementById('modal-student-joining-year').value = '';
+  toggleAddJoiningYearOnly();
   document.getElementById('modal-student-name-label').textContent = nameFieldLabel(key)+' *';
   const isAdmin = currentUserRole === 'admin';
   document.getElementById('add-student-modal-title').textContent = isAdmin ? 'Add New Student' : 'Request to Add a Student';
   document.getElementById('add-student-submit-btn').textContent = isAdmin ? 'Add Student' : 'Send Request to Admin';
   document.getElementById('add-student-modal').classList.add('visible');
+}
+// Same pattern as toggleEditJoiningYearOnly() below — kept as a separate,
+// near-identical function rather than a shared one, since the Add and Edit
+// modals use different element ids and this stays simplest to read that way.
+function toggleAddJoiningYearOnly(){
+  const yearOnly = document.getElementById('modal-student-joining-yearonly').checked;
+  const dateInput = document.getElementById('modal-student-joining');
+  const yearInput = document.getElementById('modal-student-joining-year');
+  dateInput.style.display = yearOnly ? 'none' : '';
+  yearInput.style.display = yearOnly ? '' : 'none';
+  if(yearOnly){ dateInput.value = ''; }
+  else if(!dateInput.value){ dateInput.value = fmtDate(new Date()); } // restore the sensible default if it was cleared
 }
 
 function closeAddStudentModal(){
@@ -1323,7 +1383,8 @@ async function createStudentInRoster(skey, { name, joiningDate, studentClass, pr
 
 async function confirmAddStudent(){
   const name=document.getElementById('modal-student-name').value.trim();
-  const joiningDate=document.getElementById('modal-student-joining').value;
+  const joinResult = readJoiningDateInput('modal-student');
+  const joiningDate = joinResult.value;
   const profession = isProfessionSection(addStudentContext.key);
 
   const studentClass = profession ? '' : document.getElementById('modal-student-class').value;
@@ -1339,7 +1400,7 @@ async function confirmAddStudent(){
   if(!name){showToast('Enter student name');return;}
   if(!profession && !studentClass){showToast('Select class');return;}
   if(profession && (!professionType || !professionDetail)){showToast('Select Profession or Education, and fill in the detail');return;}
-  if(!joiningDate){showToast('Select joining date');return;}
+  if(!joiningDate){showToast(joinResult.error || 'Select joining date');return;}
 
   if(!addStudentContext.key) return;
   const skey = addStudentContext.key;
@@ -1651,9 +1712,16 @@ function openEditStudentModal(key, idx) {
   const student = students[key][idx];
   const name = typeof student === 'string' ? student : student.name;
   const join = typeof student === 'object' ? student.joiningDate || '' : '';
+  const joinIsYearOnly = /^\d{4}$/.test(join);
   editStudentContext = { key, idx };
   document.getElementById('edit-student-name').value = name;
-  document.getElementById('edit-student-joining').value = join;
+  // A native date input can't hold a bare year at all (the browser just
+  // rejects it) — only populate it for a real full date. The year-only
+  // case is populated into the separate year field below instead.
+  document.getElementById('edit-student-joining').value = joinIsYearOnly ? '' : join;
+  document.getElementById('edit-student-joining-yearonly').checked = joinIsYearOnly;
+  document.getElementById('edit-student-joining-year').value = joinIsYearOnly ? join : '';
+  toggleEditJoiningYearOnly(); // sync which of the two inputs is actually visible
   document.getElementById('edit-student-section').value = key;
   if(isProfessionSection(key)){
     const p = (typeof student === 'object' && student.profession) ? student.profession : {type:'',detail:''};
@@ -1677,7 +1745,17 @@ function toggleEditFieldGroup(key){
   document.getElementById('edit-class-group').style.display = profession ? 'none' : 'block';
   document.getElementById('edit-profession-group').style.display = profession ? 'block' : 'none';
   document.getElementById('edit-student-name-label').textContent = nameFieldLabel(key)+' *';
+  // Year-only joining date is a Yuvaka Sangha thing only (per org decision —
+  // senior VYS volunteers predate exact record-keeping; VBS students always
+  // have a known exact joining date). Hide it entirely for non-VYS sections,
+  // and force it back off if someone switches a student OUT of VYS while
+  // it's checked — a VBS student saved with a year-only date would silently
+  // recreate the exact display bug this feature exists to avoid.
+  const yearOnlyWrap = document.getElementById('edit-joining-yearonly-wrap');
+  if(yearOnlyWrap) yearOnlyWrap.style.display = profession ? 'block' : 'none';
   if(!profession){
+    const cb = document.getElementById('edit-student-joining-yearonly');
+    if(cb && cb.checked){ cb.checked = false; toggleEditJoiningYearOnly(); }
     // Re-populate for the newly selected section — e.g. moving someone
     // from Middle to High School should offer Class 8-10, not 4-7. Keep
     // their current selection if it's still valid for the new range,
@@ -1685,6 +1763,20 @@ function toggleEditFieldGroup(key){
     const classSelect = document.getElementById('edit-student-class');
     populateClassOptions(classSelect, key, classSelect.value);
   }
+}
+// Swaps between the native date picker and the plain year-number input,
+// keeping exactly one of them visible and — critically — clearing the
+// hidden one's value rather than leaving stale data sitting in a field the
+// admin can no longer see (which confirmEditStudent() could otherwise read
+// by mistake if this toggle logic were ever bypassed).
+function toggleEditJoiningYearOnly(){
+  const yearOnly = document.getElementById('edit-student-joining-yearonly').checked;
+  const dateInput = document.getElementById('edit-student-joining');
+  const yearInput = document.getElementById('edit-student-joining-year');
+  dateInput.style.display = yearOnly ? 'none' : '';
+  yearInput.style.display = yearOnly ? '' : 'none';
+  if(yearOnly){ dateInput.value = ''; }
+  else { yearInput.value = ''; }
 }
 function onEditSectionChange(){
   toggleEditFieldGroup(document.getElementById('edit-student-section').value);
@@ -1697,7 +1789,7 @@ async function confirmEditStudent(){
   const { key, idx } = editStudentContext;
   if(key === null || idx === null) return;
   const newName    = document.getElementById('edit-student-name').value.trim();
-  const newJoin    = document.getElementById('edit-student-joining').value;
+  const joinResult = readJoiningDateInput('edit-student');
   const newSection = document.getElementById('edit-student-section').value;
   const profession = isProfessionSection(newSection);
   const newClass        = profession ? '' : document.getElementById('edit-student-class').value;
@@ -1706,6 +1798,10 @@ async function confirmEditStudent(){
   if(!newName){ showToast('Enter student name'); return; }
   if(!profession && !newClass){ showToast('Select class'); return; }
   if(profession && (!professionType || !professionDetail)){ showToast('Select Profession or Education, and fill in the detail'); return; }
+  // This field stays optional here (unlike Add) — only block on a genuine
+  // format problem (e.g. a malformed year), never on it simply being blank.
+  if(joinResult.error){ showToast(joinResult.error); return; }
+  const newJoin = joinResult.value;
 
   // Duplicate check (exclude self)
   let dupFound = false;

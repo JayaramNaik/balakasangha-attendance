@@ -909,6 +909,14 @@ tbody td{padding:6px 8px;vertical-align:middle}
     <div class="modal-group">
       <label for="edit-student-joining">Date of Joining</label>
       <input type="date" id="edit-student-joining">
+      <div id="edit-joining-yearonly-wrap" style="display:none">
+        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-weight:400;font-size:12px;color:var(--text2);cursor:pointer">
+          <input type="checkbox" id="edit-student-joining-yearonly" onchange="toggleEditJoiningYearOnly()" style="width:auto;margin:0">
+          I only know the year (common for senior volunteers) — no need to guess a day/month
+        </label>
+        <input type="number" id="edit-student-joining-year" placeholder="e.g. 2015" min="1950" max="2100" step="1"
+               style="display:none;margin-top:6px">
+      </div>
     </div>
     <div class="modal-group">
       <label for="edit-student-section">Move to Section</label>
@@ -981,6 +989,14 @@ tbody td{padding:6px 8px;vertical-align:middle}
     <div class="modal-group">
       <label for="modal-student-joining">Date of Joining *</label>
       <input type="date" id="modal-student-joining">
+      <div id="add-joining-yearonly-wrap" style="display:none">
+        <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-weight:400;font-size:12px;color:var(--text2);cursor:pointer">
+          <input type="checkbox" id="modal-student-joining-yearonly" onchange="toggleAddJoiningYearOnly()" style="width:auto;margin:0">
+          I only know the year (common for senior volunteers) — no need to guess a day/month
+        </label>
+        <input type="number" id="modal-student-joining-year" placeholder="e.g. 2015" min="1950" max="2100" step="1"
+               style="display:none;margin-top:6px">
+      </div>
     </div>
     <div class="modal-buttons">
       <button class="modal-btn modal-btn-primary" id="add-student-submit-btn" onclick="confirmAddStudent()">Add Student</button>
