@@ -82,8 +82,58 @@ function handleBulkFile(event) {
       // studentIdYearPart() then couldn't read a valid year out of either,
       // and silently substituted the CURRENT year in the id — with nothing
       // in the preview showing anything had gone wrong.
-      const parseDate = (raw) => {
-        raw = (raw||'').toString().trim();
+      const parseDate = (rawInput) => {
+        // Excel can hand us a raw NUMBER instead of a string for this
+        // column — most commonly this happens exactly when someone types a
+        // BARE YEAR (e.g. "2015") into a cell that inherited a date number
+        // format from neighboring cells (very easy to happen, since this
+        // column normally holds real dates). Excel doesn't reinterpret
+        // what was typed — it still stores the literal number 2015 — but
+        // it DISPLAYS that number as a date using its day-serial system
+        // (serial 2015, counted from 30-Dec-1899), which comes out to
+        // 07-07-1905. Reading Excel's own formatted display text for a
+        // cell like that (what this code used to do) hands us that bogus
+        // 1905 date instead of "2015" — sometimes rejected as unparseable,
+        // sometimes accidentally VALID-shaped and silently imported as a
+        // garbage joining date. Working from the raw underlying number
+        // sidesteps this entirely, regardless of how the cell happens to
+        // be formatted.
+        if(typeof rawInput === 'number'){
+          const nowYear = new Date().getFullYear();
+          // A genuine calendar date anywhere in the accepted 1950-current
+          // range has an Excel serial in the tens of thousands (1950-01-01
+          // is serial ~18262). A literal typed year (1950-2100) is always
+          // far smaller than that, so this threshold cleanly tells "this
+          // was meant as a year" apart from "this is a real date serial"
+          // with no realistic ambiguity.
+          if(profession && Number.isInteger(rawInput) && rawInput>=1950 && rawInput<=nowYear){
+            return String(rawInput);
+          }
+          // Otherwise this is a genuine Excel date serial — convert it
+          // properly via the library's own parser rather than hand-rolling
+          // the 1900 leap-year quirk ourselves.
+          if(typeof XLSX!=='undefined' && XLSX.SSF && XLSX.SSF.parse_date_code){
+            const parsed = XLSX.SSF.parse_date_code(rawInput);
+            // Sanity-check the resulting year even for a successfully
+            // decoded date. Without this, a VBS (non-profession) row where
+            // someone made the exact same "typed a bare year into a
+            // date-formatted cell" mistake would decode into a real, valid
+            // -shaped date (e.g. 1905-07-07 for the number 2015) and get
+            // silently imported as-is — no error shown, just a garbage
+            // joining date and a garbled id year. Any date outside a
+            // plausible joining-date range is far more likely to be this
+            // exact mistake than an actual 1905-era joining date.
+            if(parsed && parsed.y && parsed.m && parsed.d){
+              const nowYear = new Date().getFullYear();
+              if(parsed.y>=1950 && parsed.y<=nowYear+1){
+                return parsed.y+'-'+String(parsed.m).padStart(2,'0')+'-'+String(parsed.d).padStart(2,'0');
+              }
+              return null;
+            }
+          }
+          return null;
+        }
+        let raw = (rawInput||'').toString().trim();
         // Strip a leading apostrophe — Excel's own marker for "treat this
         // cell as text, don't auto-convert it to a date" (people often add
         // this deliberately to stop Excel reformatting their typed date).
@@ -169,10 +219,18 @@ function handleBulkFile(event) {
         });
       } else {
         // Parse Excel
+        // cellDates:false + raw:true (rather than the previous cellDates:true
+        // + raw:false) deliberately keeps numeric cells as plain numbers
+        // instead of letting the library or Excel's own cell formatting
+        // decide how to display them. This is what lets parseDate() tell a
+        // bare typed year (e.g. 2015) apart from a genuine date serial by
+        // its raw magnitude — see the big comment in parseDate() above for
+        // why relying on the FORMATTED text was silently producing bogus
+        // 1905-era dates for exactly that case.
         const data = new Uint8Array(e.target.result);
-        const wb = XLSX.read(data, { type: 'array', cellDates: true });
+        const wb = XLSX.read(data, { type: 'array', cellDates: false });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(ws, { raw: false });
+        const json = XLSX.utils.sheet_to_json(ws, { raw: true, defval: '' });
         // Header names are matched flexibly, not just the exact template
         // wording — real spreadsheets people actually hand you often use
         // their own naming ("Date Of Joining" instead of "Joining Date",
@@ -185,15 +243,26 @@ function handleBulkFile(event) {
         // a date column, just under a different name.
         rows = json.map(r => {
           const name = (r['Name'] || r['name'] || '').toString().trim();
-          const rawJoin = (r['Joining Date'] || r['joining date'] || r['JoiningDate']
-                         || r['Date Of Joining'] || r['Date of Joining'] || r['date of joining']
-                         || '').toString().trim();
+          // Deliberately NOT forced through .toString().trim() here like the
+          // other fields — rawJoin needs to stay a raw JS number when Excel
+          // gave us one, so parseDate() can tell a bare typed year apart
+          // from a real date serial by magnitude (see parseDate's comment).
+          // joiningDateRaw (a display-only string, used only in error
+          // messages / as a fallback value) is derived separately below.
+          const rawJoin = (r['Joining Date'] !== '' && r['Joining Date'] !== undefined) ? r['Joining Date']
+                         : (r['joining date'] !== '' && r['joining date'] !== undefined) ? r['joining date']
+                         : (r['JoiningDate'] !== '' && r['JoiningDate'] !== undefined) ? r['JoiningDate']
+                         : (r['Date Of Joining'] !== '' && r['Date Of Joining'] !== undefined) ? r['Date Of Joining']
+                         : (r['Date of Joining'] !== '' && r['Date of Joining'] !== undefined) ? r['Date of Joining']
+                         : (r['date of joining'] !== '' && r['date of joining'] !== undefined) ? r['date of joining']
+                         : '';
+          const rawJoinDisplay = (rawJoin === '' || rawJoin === undefined || rawJoin === null) ? '' : String(rawJoin).trim();
           if(profession){
             return {
               name,
               type: (r['Type'] || r['type'] || r['Profession'] || r['profession'] || '').toString().trim(),
               detail: (r['Detail'] || r['detail'] || r['Designation'] || r['designation'] || '').toString().trim(),
-              joiningDateRaw: rawJoin,
+              joiningDateRaw: rawJoinDisplay,
               joiningDate: parseDate(rawJoin),
               joinedVia: (r['Joined Via'] || r['joined via'] || r['JoinedVia']
                         || r['VBS/VYS'] || r['VBS / VYS'] || r['vbs/vys'] || '').toString().trim()
@@ -202,7 +271,7 @@ function handleBulkFile(event) {
           return {
             name,
             class: (r['Class'] || r['class'] || '').toString().trim(),
-            joiningDateRaw: rawJoin,
+            joiningDateRaw: rawJoinDisplay,
             joiningDate: parseDate(rawJoin)
           };
         });
