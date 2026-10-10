@@ -1151,7 +1151,7 @@ function renderSection(key){
     html+=`<div class="add-row">
       <input type="text" id="new-${key}" placeholder="Add ${isProfessionSection(key)?'volunteer':'student'} name..." onkeydown="if(event.key==='Enter')openAddStudentModal('${key}')">
       <button onclick="openAddStudentModal('${key}')">${currentUserRole==='admin'?'+ Add':'📨 Request to Add'}</button>
-      ${currentUserRole==='admin'?`<button onclick="openBulkImport('${key}')" style="background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📥 Bulk Import</button>`:''}
+      ${currentUserRole==='admin'?`<button onclick="openBulkImport('${key}')" style="background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📥 Bulk Import</button><button onclick="openPhoneImport('${key}')" title="Add or update WhatsApp numbers for students already on the list" style="background:#25D366;color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;margin-left:6px;">📱 Import Numbers</button>`:''}
     </div>`;
   }
   
@@ -2797,7 +2797,7 @@ let waContext = { key: null, id: null, preset: null, savedPhone: '' };
  
 function waPresets(key, student, stats){
   const name = student.name;
-  const org  = isProfessionSection(key) ? 'Yuvaka Sangha' : 'Balakasangha';
+  const org  = isProfessionSection(key) ? 'Vivekananda Yuvakasangha' : 'Vivekananda Balakasangha';
   const you  = isProfessionSection(key); // volunteers are messaged directly, students via parents
   const day  = curDate ? fmtShort(curDate) : 'today';
   const hasStats = stats.total > 0 && stats.pct !== null;
@@ -2806,20 +2806,20 @@ function waPresets(key, student, stats){
     absent: {
       label: 'Absent today',
       text: you
-        ? `Namaste 🙏\nWe missed you at today's Sunday session (${day}). Hope all is well. Do let us know if there is anything we can help with.${sign}`
-        : `Namaste 🙏\n${name} was not present at today's Sunday session (${day}). We hope everything is fine. Please let us know if there is anything we should be aware of.${sign}`
+        ? `🙏🏻 Namaste\nWe missed you at today's Sunday session (${day}). Hope all is well. Do let us know if there is anything we can help with.${sign}`
+        : `🙏🏻 Namaste\n${name} was not present at today's Sunday session (${day}). We hope everything is fine. Please let us know if there is anything we should be aware of.${sign}`
     },
     low: {
       label: 'Low attendance',
       text: you
-        ? `Namaste 🙏\nWe have not seen you at many of our recent sessions${hasStats?` (${stats.present} of ${stats.total} Sundays so far)`:''}. We would love to have you back. Is there anything we can help with?${sign}`
-        : `Namaste 🙏\n${name}'s attendance has been low recently${hasStats?` (${stats.present} of ${stats.total} Sundays, ${stats.pct}%)`:''}. We would love to see ${name} more regularly and don't want them to miss out. Is there anything we can help with?${sign}`
+        ? `🙏🏻 Namaste\nWe have not seen you at many of our recent sessions${hasStats?` (${stats.present} of ${stats.total} Sundays so far)`:''}. We would love to have you back. Is there anything we can help with?${sign}`
+        : `🙏🏻 Namaste\n${name}'s attendance has been low recently${hasStats?` (${stats.present} of ${stats.total} Sundays, ${stats.pct}%)`:''}. We would love to see ${name} more regularly and don't want them to miss out. Is there anything we can help with?${sign}`
     },
     reminder: {
       label: 'Sunday reminder',
       text: you
-        ? `Namaste 🙏\nA gentle reminder about this Sunday's session. We look forward to seeing you.${sign}`
-        : `Namaste 🙏\nA gentle reminder about this Sunday's session. Please send ${name}. We look forward to seeing them.${sign}`
+        ? `🙏🏻 Namaste\nA gentle reminder about this Sunday's session. We look forward to seeing you.${sign}`
+        : `🙏🏻 Namaste\nA gentle reminder about this Sunday's session. Please send ${name}. We look forward to seeing them.${sign}`
     },
     custom: { label: 'Write my own', text: '' }
   };

@@ -495,6 +495,40 @@ tbody td{padding:6px 8px;vertical-align:middle}
   </div>
 
 
+  <!-- ── Import WhatsApp Numbers (existing students) ── -->
+  <div id="phone-import-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
+       z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:var(--surface);border-radius:16px;padding:28px;max-width:560px;width:94%;
+                box-shadow:0 8px 32px rgba(0,0,0,.18);max-height:90vh;overflow-y:auto;border:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 id="phone-import-title" style="margin:0;color:#128C7E">📱 Import WhatsApp Numbers</h3>
+        <button onclick="closePhoneImport()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text3)">✕</button>
+      </div>
+      <div style="background:var(--blue-light);border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;color:var(--text)">
+        <strong>Step 1:</strong> Download the current list. It already has every student's name and ID.<br>
+        <strong>Step 2:</strong> Fill in the <em>WhatsApp Number</em> column, then upload it here.<br><br>
+        <button onclick="downloadPhoneSheet()" style="background:#128C7E;color:#fff;border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:13px;">⬇ Download current list (Excel)</button>
+        <div style="margin-top:8px;color:var(--text3)">Students are matched by Student ID, or by name if there is no ID column. This only updates numbers; it never adds or removes students.</div>
+      </div>
+      <input type="file" id="phone-file-input" accept=".xlsx,.xls,.csv" onchange="handlePhoneFile(event)" style="margin-bottom:12px;font-size:13px">
+      <div id="phone-status" style="font-size:13px;margin-bottom:10px;color:var(--text2)"></div>
+      <div id="phone-preview" style="display:none;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr>
+            <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Name</th>
+            <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Number</th>
+            <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Status</th>
+          </tr></thead>
+          <tbody id="phone-preview-body"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="closePhoneImport()" style="background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:8px;padding:9px 16px;cursor:pointer;font-size:13px">Cancel</button>
+        <button id="phone-confirm-btn" onclick="confirmPhoneImport()" style="display:none;background:#25D366;color:#fff;border:none;border-radius:8px;padding:9px 16px;cursor:pointer;font-size:13px;font-weight:600">Update numbers</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Bulk Import Modal ── -->
   <div id="bulk-import-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
        z-index:9999;align-items:center;justify-content:center;">

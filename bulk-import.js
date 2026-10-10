@@ -467,3 +467,158 @@ async function confirmBulkImport() {
   }
 }
  
+ 
+// ===================== IMPORT WHATSAPP NUMBERS (existing students) =====================
+// Regular Bulk Import only ADDS new students (and rejects duplicate names), so it
+// can't be used to fill in numbers for people already on the list. This does
+// the opposite: it only UPDATES the parent/WhatsApp number of existing students,
+// matched by Student ID (or by name when there's no ID column). It never adds
+// or removes anyone.
+let phoneImportContext = { key: null, updates: [] };
+ 
+function openPhoneImport(key){
+  phoneImportContext = { key, updates: [] };
+  document.getElementById('phone-import-title').textContent =
+    isProfessionSection(key) ? '📱 Import WhatsApp Numbers (Volunteers)' : '📱 Import Parent WhatsApp Numbers';
+  document.getElementById('phone-import-overlay').style.display = 'flex';
+  document.getElementById('phone-preview').style.display = 'none';
+  document.getElementById('phone-confirm-btn').style.display = 'none';
+  document.getElementById('phone-status').textContent = '';
+  document.getElementById('phone-file-input').value = '';
+}
+ 
+function closePhoneImport(){
+  document.getElementById('phone-import-overlay').style.display = 'none';
+  phoneImportContext = { key: null, updates: [] };
+}
+ 
+// Excel sheet pre-filled with this section's current list, so the admin only types numbers
+function downloadPhoneSheet(){
+  const key = phoneImportContext.key;
+  if(!key) return;
+  const profession = isProfessionSection(key);
+  const rows = [['Student ID', 'Name', profession ? 'Detail' : 'Class', profession ? 'WhatsApp Number' : 'Parent WhatsApp Number']];
+  (students[key] || []).forEach(s => {
+    if(!s || typeof s !== 'object') return;
+    const detail = profession ? ((s.profession && s.profession.detail) || '') : (s.class || '');
+    rows.push([s.id || '', s.name, detail, s.parentPhone ? formatPhone(s.parentPhone) : '']);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws['!cols'] = [{wch:12},{wch:28},{wch:18},{wch:26}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Numbers');
+  XLSX.writeFile(wb, 'whatsapp_numbers_' + key + '.xlsx');
+}
+ 
+function _normHeader(h){ return String(h||'').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+function _pickCol(row, names){
+  const want = names.map(_normHeader);
+  for(const k of Object.keys(row)){
+    if(want.includes(_normHeader(k))){
+      const v = row[k];
+      if(v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+    }
+  }
+  return '';
+}
+ 
+function handlePhoneFile(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const status = document.getElementById('phone-status');
+  const reader = new FileReader();
+  reader.onload = e => {
+    try{
+      // SheetJS reads .csv, .xls and .xlsx the same way
+      const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '', raw: true });
+      processPhoneRows(rows);
+    }catch(err){
+      status.textContent = '❌ Could not read that file: ' + err.message;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+ 
+function processPhoneRows(rows){
+  const key = phoneImportContext.key;
+  const arr = students[key] || [];
+  const byId = {}, byName = {};
+  arr.forEach(s => {
+    if(!s || typeof s !== 'object') return;
+    if(s.id) byId[String(s.id).trim().toLowerCase()] = s;
+    const n = s.name.trim().toLowerCase();
+    (byName[n] = byName[n] || []).push(s);
+  });
+ 
+  const nameCols  = ['Name', 'Student Name', 'Volunteer Name'];
+  const idCols    = ['Student ID', 'ID', 'VBS ID', 'Member ID'];
+  const phoneCols = ['Parent WhatsApp Number','Parent WhatsApp','WhatsApp Number','WhatsApp','Parent Phone','Parent Mobile','Phone Number','Phone','Mobile Number','Mobile','Contact','Contact Number'];
+ 
+  const preview = [];
+  const updates = [];
+  const seen = new Set();
+  rows.forEach(r => {
+    const nm = _pickCol(r, nameCols), id = _pickCol(r, idCols), phoneRaw = _pickCol(r, phoneCols);
+    if(!nm && !id) return; // blank row
+ 
+    let student = null, problem = '';
+    if(id && byId[id.toLowerCase()]) student = byId[id.toLowerCase()];
+    else if(nm){
+      const hits = byName[nm.toLowerCase()] || [];
+      if(hits.length === 1) student = hits[0];
+      else if(hits.length > 1) problem = '⚠️ Several students share this name — use the Student ID column';
+    }
+    const label = student ? student.name : (nm || id);
+ 
+    if(problem){ preview.push({ name: label, phone: phoneRaw, status: problem, ok: false }); return; }
+    if(!student){ preview.push({ name: label, phone: phoneRaw, status: '⚠️ Not found in this section', ok: false }); return; }
+    if(seen.has(student.id)){ preview.push({ name: label, phone: phoneRaw, status: '⚠️ Listed twice — first one used', ok: false }); return; }
+    seen.add(student.id);
+ 
+    if(!phoneRaw){ preview.push({ name: label, phone: '', status: '— No number, skipped', ok: false, neutral: true }); return; }
+    const phone = normalizePhone(phoneRaw);
+    if(phone === null){ preview.push({ name: label, phone: phoneRaw, status: '⚠️ Invalid number', ok: false }); return; }
+    if(student.parentPhone === phone){ preview.push({ name: label, phone: formatPhone(phone), status: '— Already saved', ok: false, neutral: true }); return; }
+ 
+    preview.push({ name: label, phone: formatPhone(phone), status: student.parentPhone ? '✅ Will replace existing number' : '✅ Will add', ok: true });
+    updates.push({ id: student.id, phone });
+  });
+ 
+  phoneImportContext.updates = updates;
+  const tbody = document.getElementById('phone-preview-body');
+  tbody.innerHTML = preview.map(p => `<tr>
+      <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(p.name)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap">${escapeHtml(p.phone) || '—'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:${p.ok ? 'var(--green-dark, #0F6E56)' : (p.neutral ? 'var(--text3)' : 'var(--red-dark, #A32D2D)')}">${escapeHtml(p.status)}</td>
+    </tr>`).join('');
+  document.getElementById('phone-preview').style.display = preview.length ? 'block' : 'none';
+ 
+  const problems = preview.filter(p => !p.ok && !p.neutral).length;
+  document.getElementById('phone-status').textContent = preview.length
+    ? `${updates.length} ready to update` + (problems ? `, ${problems} need attention (they will be skipped)` : '')
+    : '❌ No rows found. Check that the file has a Name (or Student ID) column and a WhatsApp Number column.';
+  const btn = document.getElementById('phone-confirm-btn');
+  btn.style.display = updates.length ? 'inline-block' : 'none';
+  btn.textContent = `Update ${updates.length} number${updates.length === 1 ? '' : 's'}`;
+}
+ 
+async function confirmPhoneImport(){
+  const { key, updates } = phoneImportContext;
+  if(!key || !updates.length) return;
+  const arr = students[key] || [];
+  let n = 0;
+  updates.forEach(u => {
+    const s = arr.find(x => x && typeof x === 'object' && x.id === u.id);
+    if(s){ s.parentPhone = u.phone; n++; }
+  });
+  closePhoneImport();
+  try{
+    await saveRosterChange({ sections: [key] });
+    renderSection(key);
+    showToast(`✅ ${n} WhatsApp number${n === 1 ? '' : 's'} saved`);
+  }catch(e){
+    showToast('Could not save numbers: ' + e.message);
+  }
+}
+ 
