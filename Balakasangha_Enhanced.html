@@ -139,6 +139,20 @@ tbody td{padding:6px 8px;vertical-align:middle}
 .del-btn:hover{color:var(--red);background:var(--red-light)}
 .edit-btn{background:none;border:none;cursor:pointer;color:var(--text4);font-size:13px;padding:2px 4px;border-radius:4px}
 .edit-btn:hover{color:var(--blue);background:var(--blue-light)}
+.wa-btn{color:#25D366;display:inline-flex;align-items:center;padding:3px 4px}
+.wa-btn:hover{color:#128C7E;background:rgba(37,211,102,.12)}
+.wa-btn.wa-nonum{color:var(--text4)}
+.wa-btn.wa-nonum:hover{color:#128C7E}
+.wa-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.wa-chip{border:1px solid var(--border);background:var(--surface);color:var(--text2);border-radius:20px;padding:5px 12px;font-size:12px;cursor:pointer}
+.wa-chip:hover{border-color:#25D366}
+.wa-chip.active{background:rgba(37,211,102,.14);border-color:#25D366;color:#0b6b3a;font-weight:600}
+#wa-text{width:100%;min-height:150px;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--text);resize:vertical}
+#wa-text:focus{border-color:#25D366;outline:none}
+.wa-last{display:block;font-size:9px;line-height:1.1;color:var(--text4);margin-top:1px;white-space:nowrap}
+.wa-last.today{color:#128C7E;font-weight:700}
+.wa-send{background:#25D366;color:#fff}
+.wa-send:hover{background:#1fb457}
 
 
 
@@ -234,7 +248,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
 
 /* Print styles */
 @media print{
-  .no-print,.top-bar,.main-nav,.type-tabs,.school-tabs,.controls,.add-row,.export-bar,.sync-bar,.user-info-bar,.login-container,#toast,.modal,.history-modal{display:none!important}
+  .no-print,.top-bar,.main-nav,.type-tabs,.school-tabs,.controls,.add-row,.export-bar,.sync-bar,.user-info-bar,.login-container,#toast,.modal,.history-modal,.wa-btn{display:none!important}
   body{background:#fff;color:#000;font-size:11px}
   .app{max-width:100%;padding:0}
   table{page-break-inside:auto;border:1px solid #ccc}
@@ -529,6 +543,7 @@ tbody td{padding:6px 8px;vertical-align:middle}
                 <th id="bulk-secondary-col-header" style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Class</th>
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Joining Date</th>
                 <th id="bulk-origin-col-header" style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3);display:none">Joined Via</th>
+                <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">WhatsApp</th>
                 <th style="padding:8px;text-align:left;border-bottom:1px solid var(--border);color:var(--text3)">Status</th>
               </tr>
             </thead>
@@ -919,6 +934,10 @@ tbody td{padding:6px 8px;vertical-align:middle}
       </div>
     </div>
     <div class="modal-group">
+      <label for="edit-student-phone" id="edit-student-phone-label">Parent's WhatsApp number (optional)</label>
+      <input type="tel" id="edit-student-phone" inputmode="tel" placeholder="e.g. 98765 43210" autocomplete="off">
+    </div>
+    <div class="modal-group">
       <label for="edit-student-section">Move to Section</label>
       <select id="edit-student-section" onchange="onEditSectionChange()">
         <option value="old-middle">Old Students — Middle School</option>
@@ -998,9 +1017,38 @@ tbody td{padding:6px 8px;vertical-align:middle}
                style="display:none;margin-top:6px">
       </div>
     </div>
+    <div class="modal-group">
+      <label for="modal-student-phone" id="modal-student-phone-label">Parent's WhatsApp number (optional)</label>
+      <input type="tel" id="modal-student-phone" inputmode="tel" placeholder="e.g. 98765 43210" autocomplete="off">
+    </div>
     <div class="modal-buttons">
       <button class="modal-btn modal-btn-primary" id="add-student-submit-btn" onclick="confirmAddStudent()">Add Student</button>
       <button class="modal-btn modal-btn-secondary" onclick="closeAddStudentModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- WHATSAPP MESSAGE MODAL -->
+<div id="wa-modal" class="modal">
+  <div class="modal-content">
+    <div class="modal-title">💬 Message on WhatsApp</div>
+    <div style="font-size:13px;color:var(--text2);margin:-0.8rem 0 1rem">For <strong id="wa-student-name" style="color:var(--text)"></strong></div>
+    <div id="wa-last-line" style="display:none;font-size:12px;border-radius:8px;padding:7px 10px;margin:-0.2rem 0 1rem"></div>
+    <div class="modal-group">
+      <label for="wa-phone" id="wa-phone-label">Parent's WhatsApp number</label>
+      <input type="tel" id="wa-phone" inputmode="tel" placeholder="e.g. 98765 43210" autocomplete="off" oninput="waUpdateSaveRow()">
+      <label id="wa-save-row" style="display:none;align-items:center;gap:6px;margin-top:8px;font-weight:400;font-size:12px;color:var(--text2);cursor:pointer">
+        <input type="checkbox" id="wa-save-phone" checked style="width:auto;margin:0"> Save this number to the student's profile
+      </label>
+    </div>
+    <div class="modal-group">
+      <label>Message</label>
+      <div class="wa-chips" id="wa-chips"></div>
+      <textarea id="wa-text" placeholder="Type your message…"></textarea>
+    </div>
+    <div class="modal-buttons">
+      <button class="modal-btn wa-send" onclick="sendWhatsApp()">Send on WhatsApp</button>
+      <button class="modal-btn modal-btn-secondary" onclick="closeWhatsAppModal()">Cancel</button>
     </div>
   </div>
 </div>

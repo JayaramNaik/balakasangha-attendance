@@ -1,4 +1,4 @@
-const CACHE_NAME = 'balaka-v10';
+const CACHE_NAME = 'balaka-v12';
 
 // Derive BASE from the service worker's own location instead of hardcoding
 // '/balakasangha-attendance'. Previously, if this file were ever served from
@@ -104,3 +104,4 @@ self.addEventListener('fetch', event => {
     )
   );
 });
+ 

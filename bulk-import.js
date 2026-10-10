@@ -1,13 +1,13 @@
 // ===================== BULK IMPORT =====================
 let bulkImportContext = { key: null, students: [] };
-
+ 
 function openBulkImport(key) {
   bulkImportContext = { key, students: [] };
   const profession = isProfessionSection(key);
   document.getElementById('bulk-import-title').textContent = profession ? '📥 Bulk Import Volunteers' : '📥 Bulk Import Students';
   document.getElementById('bulk-columns-hint').textContent = profession
-    ? 'Columns: Name, Type (Profession/Education), Detail, Joining Date (DD-MM-YYYY, or just a year like 2015 if the exact date is unknown), Joined Via (Directly / VBS — optional, defaults to Directly)'
-    : 'Columns: Name, Class, Joining Date';
+    ? 'Columns: Name, Type (Profession/Education), Detail, Joining Date (DD-MM-YYYY, or just a year like 2015 if the exact date is unknown), Joined Via (Directly / VBS — optional, defaults to Directly), WhatsApp Number (optional)'
+    : 'Columns: Name, Class, Joining Date, Parent WhatsApp Number (optional)';
   document.getElementById('bulk-secondary-col-header').textContent = secondaryFieldLabel(key);
   // "Joined Via" only applies to Yuvaka Sangha imports — same reasoning as
   // the single-add modal's add-origin-group (see openAddStudentModal).
@@ -18,23 +18,23 @@ function openBulkImport(key) {
   document.getElementById('bulk-status').textContent = '';
   document.getElementById('bulk-file-input').value = '';
 }
-
+ 
 function closeBulkImport() {
   document.getElementById('bulk-import-overlay').style.display = 'none';
   bulkImportContext = { key: null, students: [] };
 }
-
+ 
 function downloadTemplate() {
   const profession = isProfessionSection(bulkImportContext.key);
   const wb = XLSX.utils.book_new();
   if(profession){
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Name', 'Type', 'Detail', 'Joining Date', 'Joined Via'],
-      ['Ramesh Rao', 'Profession', 'Software Engineer', '22-06-2026', 'Directly'],
-      ['Anjali Bhat', 'Education', 'B.Com 2nd Year', '22-06-2026', 'VBS'],
-      ['Suresh Kumar', 'Profession', 'Business', '2015', 'VBS'],
+      ['Name', 'Type', 'Detail', 'Joining Date', 'Joined Via', 'WhatsApp Number'],
+      ['Ramesh Rao', 'Profession', 'Software Engineer', '22-06-2026', 'Directly', '9876543210'],
+      ['Anjali Bhat', 'Education', 'B.Com 2nd Year', '22-06-2026', 'VBS', ''],
+      ['Suresh Kumar', 'Profession', 'Business', '2015', 'VBS', '+91 98450 12345'],
     ]);
-    ws['!cols'] = [{wch:25},{wch:12},{wch:22},{wch:15},{wch:12}];
+    ws['!cols'] = [{wch:25},{wch:12},{wch:22},{wch:15},{wch:12},{wch:18}];
     // Row 4 is deliberate — shows that for senior volunteers whose exact
     // joining date isn't known, a bare 4-digit year (just "2015", no day
     // or month) is a valid Joining Date value on its own, not something
@@ -43,30 +43,30 @@ function downloadTemplate() {
     XLSX.writeFile(wb, 'YuvakaSangha_Volunteer_Template.xlsx');
   } else {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Name', 'Class', 'Joining Date'],
-      ['Ravi Kumar', '7', '22-06-2026'],
-      ['Priya Sharma', '8', '22-06-2026'],
-      ['Arjun Naik', '5', '22-06-2026'],
+      ['Name', 'Class', 'Joining Date', 'Parent WhatsApp Number'],
+      ['Ravi Kumar', '7', '22-06-2026', '9876543210'],
+      ['Priya Sharma', '8', '22-06-2026', '+91 98450 12345'],
+      ['Arjun Naik', '5', '22-06-2026', ''],
     ]);
-    ws['!cols'] = [{wch:25},{wch:10},{wch:15}];
+    ws['!cols'] = [{wch:25},{wch:10},{wch:15},{wch:24}];
     XLSX.utils.book_append_sheet(wb, ws, 'Students');
     XLSX.writeFile(wb, 'BalakaSangha_Student_Template.xlsx');
   }
 }
-
+ 
 function handleBulkFile(event) {
   const file = event.target.files[0];
   if (!file) return;
   document.getElementById('bulk-status').textContent = 'Reading file...';
-
+ 
   const key = bulkImportContext.key;
   const profession = isProfessionSection(key);
   const reader = new FileReader();
-
+ 
   reader.onload = function(e) {
     try {
       let rows = [];
-
+ 
       // Robust date parser for bulk import. Accepts the app's established
       // day-first convention (DD-MM-YYYY OR DD/MM/YYYY, 1- or 2-digit day
       // /month) as well as already-ISO YYYY-MM-DD — spreadsheet software
@@ -182,7 +182,7 @@ function handleBulkFile(event) {
         }
         return null; // unrecognized shape — flagged as an error downstream, never guessed
       };
-
+ 
       if (file.name.endsWith('.csv')) {
         // Parse CSV — respecting quoted fields that contain commas (e.g. a
         // profession detail like "Software Engineer, Backend"). A plain
@@ -213,9 +213,9 @@ function handleBulkFile(event) {
         rows = lines.slice(1).map(line => {
           const vals = parseCSVLine(line);
           if(profession){
-            return { name: vals[0]||'', type: vals[1]||'', detail: vals[2]||'', joiningDateRaw: (vals[3]||'').trim(), joiningDate: parseDate(vals[3]), joinedVia: vals[4]||'' };
+            return { name: vals[0]||'', type: vals[1]||'', detail: vals[2]||'', joiningDateRaw: (vals[3]||'').trim(), joiningDate: parseDate(vals[3]), joinedVia: vals[4]||'', phoneRaw: (vals[5]||'').trim() };
           }
-          return { name: vals[0]||'', class: vals[1]||'', joiningDateRaw: (vals[2]||'').trim(), joiningDate: parseDate(vals[2]) };
+          return { name: vals[0]||'', class: vals[1]||'', joiningDateRaw: (vals[2]||'').trim(), joiningDate: parseDate(vals[2]), phoneRaw: (vals[3]||'').trim() };
         });
       } else {
         // Parse Excel
@@ -257,6 +257,14 @@ function handleBulkFile(event) {
                          : (r['date of joining'] !== '' && r['date of joining'] !== undefined) ? r['date of joining']
                          : '';
           const rawJoinDisplay = (rawJoin === '' || rawJoin === undefined || rawJoin === null) ? '' : String(rawJoin).trim();
+          // Phone: Excel often hands back a plain number (9876543210), which
+          // String() turns into the right digits. Accepts several common headers.
+          const phoneHeaders = ['Parent WhatsApp Number','Parent WhatsApp','WhatsApp Number','WhatsApp','Parent Phone','Parent Mobile','Phone Number','Phone','Mobile Number','Mobile','Contact','Contact Number'];
+          let phoneRaw = '';
+          for(const h of phoneHeaders){
+            const v = r[h] !== undefined ? r[h] : r[h.toLowerCase()];
+            if(v !== undefined && v !== ''){ phoneRaw = String(v).trim(); break; }
+          }
           if(profession){
             return {
               name,
@@ -265,23 +273,25 @@ function handleBulkFile(event) {
               joiningDateRaw: rawJoinDisplay,
               joiningDate: parseDate(rawJoin),
               joinedVia: (r['Joined Via'] || r['joined via'] || r['JoinedVia']
-                        || r['VBS/VYS'] || r['VBS / VYS'] || r['vbs/vys'] || '').toString().trim()
+                        || r['VBS/VYS'] || r['VBS / VYS'] || r['vbs/vys'] || '').toString().trim(),
+              phoneRaw
             };
           }
           return {
             name,
             class: (r['Class'] || r['class'] || '').toString().trim(),
             joiningDateRaw: rawJoinDisplay,
-            joiningDate: parseDate(rawJoin)
+            joiningDate: parseDate(rawJoin),
+            phoneRaw
           };
         });
       }
-
+ 
       // Validate rows
       const validStudents = [];
       const previewRows = [];
       const errors = [];
-
+ 
       if(profession){
         // "Joined Via" mirrors the single-add modal's origin dropdown (see
         // openAddStudentModal / add-origin-group) — it only affects which
@@ -319,18 +329,24 @@ function handleBulkFile(event) {
           // a silent substitution (see parseDate's comment above).
           const joining = r.joiningDate === null ? r.joiningDateRaw : (r.joiningDate || fmtDate(new Date()));
           const joinedVia = parseJoinedVia(r.joinedVia);
-
+          const phone = normalizePhone(r.phoneRaw); // '' = none given, null = invalid
+ 
           let status = '✅ Valid';
           let valid = true;
-
+ 
           if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
           else if (!type) { status = '⚠️ Type must be Profession or Education'; valid = false; errors.push(`Row ${rowNum}: Invalid type "${r.type}"`); }
           else if (!detail) { status = '⚠️ Detail is required'; valid = false; errors.push(`Row ${rowNum}: Missing detail`); }
           else if (r.joiningDate === null) { status = '⚠️ Could not understand Joining Date "'+r.joiningDateRaw+'" (use DD-MM-YYYY, or just a 4-digit year like 2015 if the exact date isn\'t known)'; valid = false; errors.push(`Row ${rowNum}: Invalid Joining Date "${r.joiningDateRaw}" — use DD-MM-YYYY, or a bare year like 2015`); }
           else if (joinedVia.origin === null) { status = '⚠️ Joined Via must be Directly or VBS'; valid = false; errors.push(`Row ${rowNum}: Invalid "Joined Via" value "${r.joinedVia}"`); }
-
-          previewRows.push({ name, secondary: valid ? type+': '+detail : (r.type||'—'), joining, origin: joinedVia.label, status, valid });
-          if (valid) validStudents.push({ name, profession: { type, detail }, joiningDate: joining, originOverride: joinedVia.origin });
+          else if (phone === null) { status = '⚠️ Invalid WhatsApp number "'+r.phoneRaw+'"'; valid = false; errors.push(`Row ${rowNum}: Invalid WhatsApp number "${r.phoneRaw}" — use 10 digits or include the country code`); }
+ 
+          previewRows.push({ name, secondary: valid ? type+': '+detail : (r.type||'—'), joining, origin: joinedVia.label, phone: phone ? formatPhone(phone) : (phone === null ? r.phoneRaw : ''), status, valid });
+          if (valid) {
+            const sObj = { name, profession: { type, detail }, joiningDate: joining, originOverride: joinedVia.origin };
+            if (phone) sObj.parentPhone = phone;
+            validStudents.push(sObj);
+          }
         });
       } else {
         const today = fmtDate(new Date());
@@ -341,22 +357,29 @@ function handleBulkFile(event) {
           const clsNum = parseInt(cls);
           const joining = r.joiningDate === null ? r.joiningDateRaw : (r.joiningDate || today);
           const validRange = CLASS_RANGES[schoolLevelForKey(key)] || [4,5,6,7,8,9,10];
-
+          const phone = normalizePhone(r.phoneRaw); // '' = none given, null = invalid
+ 
           let status = '✅ Valid';
           let valid = true;
-
+ 
           if (!name) { status = '❌ Missing name'; valid = false; errors.push(`Row ${rowNum}: Missing name`); }
           else if (isNaN(clsNum) || !validRange.includes(clsNum)) {
             status = `⚠️ Class must be ${validRange[0]}-${validRange[validRange.length-1]}`; valid = false;
             errors.push(`Row ${rowNum}: Invalid class "${cls}" for this section (must be ${validRange[0]}-${validRange[validRange.length-1]})`);
           }
           else if (r.joiningDate === null) { status = '⚠️ Could not understand Joining Date "'+r.joiningDateRaw+'" (use DD-MM-YYYY)'; valid = false; errors.push(`Row ${rowNum}: Invalid Joining Date "${r.joiningDateRaw}" — use DD-MM-YYYY`); }
-
-          previewRows.push({ name, secondary: cls ? 'Class '+cls : '—', joining, status, valid });
-          if (valid) validStudents.push({ name, class: String(clsNum), joiningDate: joining });
+ 
+          else if (phone === null) { status = '⚠️ Invalid WhatsApp number "'+r.phoneRaw+'"'; valid = false; errors.push(`Row ${rowNum}: Invalid WhatsApp number "${r.phoneRaw}" — use 10 digits or include the country code`); }
+ 
+          previewRows.push({ name, secondary: cls ? 'Class '+cls : '—', joining, phone: phone ? formatPhone(phone) : (phone === null ? r.phoneRaw : ''), status, valid });
+          if (valid) {
+            const sObj = { name, class: String(clsNum), joiningDate: joining };
+            if (phone) sObj.parentPhone = phone;
+            validStudents.push(sObj);
+          }
         });
       }
-
+ 
       // Show preview
       bulkImportContext.students = validStudents;
       const tbody = document.getElementById('bulk-preview-body');
@@ -367,34 +390,35 @@ function handleBulkFile(event) {
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${escapeHtml(r.secondary)||'—'}</td>
           <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${escapeHtml(r.joining)||'—'}</td>
           ${profession ? `<td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2)">${escapeHtml(r.origin)||'—'}</td>` : ''}
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text2);white-space:nowrap">${escapeHtml(r.phone)||'—'}</td>
           <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${r.status}</td>
         </tr>
       `).join('');
-
+ 
       document.getElementById('bulk-count').textContent = validStudents.length + ' valid';
       document.getElementById('bulk-errors').textContent = errors.length ? errors.join(' | ') : '';
       document.getElementById('bulk-preview').style.display = 'block';
       document.getElementById('bulk-confirm-btn').style.display = validStudents.length > 0 ? 'inline-block' : 'none';
       document.getElementById('bulk-status').textContent = 
         `Found ${previewRows.length} rows — ${validStudents.length} valid, ${previewRows.length - validStudents.length} skipped.`;
-
+ 
     } catch(err) {
       document.getElementById('bulk-status').textContent = '❌ Error reading file: ' + err.message;
     }
   };
-
+ 
   if (file.name.endsWith('.csv')) {
     reader.readAsText(file);
   } else {
     reader.readAsArrayBuffer(file);
   }
 }
-
+ 
 async function confirmBulkImport() {
   const key = bulkImportContext.key;
   const newStudents = bulkImportContext.students;
   if (!key || !newStudents.length) return;
-
+ 
   // Check for duplicate names against existing students in ALL sections
   const existingNames = new Set();
   Object.keys(students).forEach(sec => {
@@ -408,11 +432,11 @@ async function confirmBulkImport() {
       `❌ Duplicate names found: ${duplicates.map(s=>s.name).join(', ')}. Remove them from the file and re-upload.`;
     return;
   }
-
+ 
   document.getElementById('bulk-confirm-btn').disabled = true;
   document.getElementById('bulk-status').textContent = `Importing ${newStudents.length} students...`;
   setSyncStatus('syncing', 'Bulk importing...');
-
+ 
   try {
     // Records are now keyed by permanent id, not array position, so a
     // freshly-imported student can never inherit another (removed)
@@ -428,17 +452,18 @@ async function confirmBulkImport() {
       delete s.originOverride;
       students[key].push(s);
     }
-
+ 
     await saveRosterChange({ sections: [key] });
     renderSection(key);
     closeBulkImport();
     showToast('✅ Imported ' + newStudents.length + ' students!');
     setSyncStatus('synced', 'Import complete');
     setTimeout(()=>{const t=document.querySelector('table');if(t)t.scrollIntoView({behavior:'smooth',block:'start'});},400);
-
+ 
   } catch(e) {
     document.getElementById('bulk-status').textContent = '❌ Import failed: ' + e.message;
     document.getElementById('bulk-confirm-btn').disabled = false;
     setSyncStatus('error', 'Import failed');
   }
 }
+ 

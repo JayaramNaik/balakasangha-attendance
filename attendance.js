@@ -10,7 +10,7 @@ const FIREBASE_CONFIG = {
 const STATE_DOC_PATH = 'attendance/state';
 const ADMINS_DOC_PATH = 'attendance/admins';
 const VOLUNTEERS_DOC_PATH = 'attendance/volunteers';
-
+ 
 // ===================== CONSTANTS =====================
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const SECTIONS={
@@ -24,11 +24,11 @@ const SEC_KEYS=Object.keys(SECTIONS);
 // Balaka Sangha sections only (excludes Yuvaka Sangha) — used for anything that
 // should never mix the two groups together, like combined exports.
 const BALAKA_SEC_KEYS=SEC_KEYS.filter(k=>SECTIONS[k].type!=='yuvaka');
-
+ 
 // A section can define fieldType:'profession' (Yuvaka Sangha) instead of the
 // default Class field. These helpers keep every render/export site in sync.
 function isProfessionSection(key){ return (SECTIONS[key]||{}).fieldType === 'profession'; }
-
+ 
 // Middle School = Class 4-7, High School = Class 8-10. Previously the class
 // dropdown offered 5-10 regardless of which section you were adding to —
 // meaning nothing stopped a Class 8 student from being added to a Middle
@@ -64,7 +64,7 @@ function secondaryFieldValue(key, student){
   return student.class || '';
 }
 function exportFilePrefix(key){ return isProfessionSection(key) ? 'YuvakaSangha' : 'BalakaSangha'; }
-
+ 
 // Returns the permanent id for the student currently at students[key][idx].
 // Falls back to the plain array index (as a string) if that student somehow
 // hasn't been assigned an id yet — this matches the OLD key format exactly,
@@ -76,7 +76,7 @@ function idFor(key, idx){
   if(s && typeof s === 'object' && s.id) return s.id;
   return String(idx);
 }
-
+ 
 // Now that records live in their own subcollection, attendance/state only
 // holds students + locks + archivedStudents, which grows far slower — but
 // "far slower" isn't "never," especially archivedStudents (append-only,
@@ -107,8 +107,8 @@ function checkDocumentSizeWarning(){
     console.warn('[doc size check] failed:', e.message);
   }
 }
-
-
+ 
+ 
 let students={'old-middle':[],'old-high':[],'new-middle':[],'new-high':[],'yuvaka-sangha':[]};
 // records: the in-memory attendance-mark/tracker map — SAME shape and key
 // format as always ('section|date|studentId' and its '|tracker' variant).
@@ -139,7 +139,7 @@ const now=new Date();
 let curMonth=now.getMonth(),curYear=now.getFullYear();
 let curDate=null,curView='attendance',curType='old';
 let curSchool={old:'old-middle',new:'new-middle',yuvaka:'yuvaka-sangha'};
-
+ 
 // Display-only sort for the attendance table — does NOT change the stored
 // order of students[key] at all (that stays exactly as insertion order,
 // which is what "Order Added" shows), so this is purely a rendering
@@ -153,7 +153,7 @@ function setSortMode(mode){
   curSort = mode;
   renderCurrentSection();
 }
-
+ 
 // Parses a permanent student ID into its parts for correct numeric
 // comparison. Two shapes exist and both must be handled: the CURRENT
 // format (3-char prefix VBS/VYS + 2-digit year + serial) and the LEGACY
@@ -195,7 +195,7 @@ function compareStudentIds(idA, idB){
   if(a.serial !== b.serial) return a.serial - b.serial; // then join order within that year
   return a.prefix.localeCompare(b.prefix);              // tiebreak, shouldn't normally matter
 }
-
+ 
 // Returns the array indices for students[key] in the CURRENT sort order.
 // Callers still use the returned index (i) for every actual data lookup
 // (getRecord, getStats, mark, edit, delete, history) — only the ITERATION
@@ -216,7 +216,7 @@ function sortedIndices(key){
   return idxs;
 }
 const chartInstances={};
-
+ 
 // User & Auth
 let db=null;
 let auth=null;
@@ -252,13 +252,14 @@ let adminsDoc=null;
 let volunteersDoc=null;
 let correctionsCollection=null;
 let auditLogCollection=null;
+let messageLogCollection=null;
 let recordsCollection=null;
 let studentAddRequestsCollection=null;
 let allCorrections=[]; // full live list from Firestore, kept in sync via onSnapshot
-
+ 
 // Modal state
 let addStudentContext={key:null};
-
+ 
 // ===================== UTILITY FUNCTIONS =====================
 function setSyncStatus(status,msg){
   const dot=document.getElementById('sync-dot');
@@ -266,7 +267,7 @@ function setSyncStatus(status,msg){
   dot.className='sync-dot '+status;
   label.textContent=msg;
 }
-
+ 
 // ===================== SECURITY: HTML ESCAPING =====================
 // Every one of these fields is user-controlled and gets rendered via
 // innerHTML somewhere in the app: student/volunteer names (typed by an
@@ -290,7 +291,7 @@ function escapeHtml(str){
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
-
+ 
 // For user text embedded inside a single-quoted JS string literal that is
 // itself inside a double-quoted HTML attribute (e.g. onclick="fn('${x}')").
 // Order matters: escape backslashes first, then quotes for the JS string,
@@ -304,14 +305,14 @@ function escapeForJsAttr(str){
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
-
+ 
 function showToast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg;
   t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),2200);
 }
-
+ 
 function showError(msg, elementId='error-message'){
   const el=document.getElementById(elementId);
   if(el){
@@ -320,21 +321,21 @@ function showError(msg, elementId='error-message'){
     setTimeout(()=>el.classList.remove('show'),4000);
   }
 }
-
+ 
 function persistLocal(){
   try{ localStorage.setItem('balaka_students', JSON.stringify(students)); }catch(e){}
   try{ localStorage.setItem('balaka_records', JSON.stringify(records)); }catch(e){}
 }
-
+ 
 // ===== OFFLINE SAFETY NET =====
 let pendingSync = false;
 let syncRetryTimer = null;
-
+ 
 function setPendingSync(val){
   pendingSync = val;
   try{ localStorage.setItem('balaka_pendingSync', val ? '1' : '0'); }catch(e){}
 }
-
+ 
 async function trySyncNow(){
   if(!stateDoc || !navigator.onLine) return;
   try{
@@ -349,7 +350,7 @@ async function trySyncNow(){
     if(syncRetryTimer){ clearInterval(syncRetryTimer); syncRetryTimer = null; }
   }catch(e){ /* still offline, keep retrying */ }
 }
-
+ 
 window.addEventListener('online', ()=>{
   if(pendingSync || localStorage.getItem('balaka_pendingSync')==='1'){
     setSyncStatus('syncing','Internet restored — syncing...');
@@ -359,7 +360,7 @@ window.addEventListener('online', ()=>{
     setSyncStatus('synced','Online');
   }
 });
-
+ 
 // A phone screen locking, or switching apps, can leave this page sitting in
 // the background for a long time. The underlying data listeners keep
 // receiving live updates the whole time (corrections, records, roster —
@@ -379,24 +380,24 @@ document.addEventListener('visibilitychange', ()=>{
   else if(curView==='auditlog') renderAuditLog();
   else if(curView==='approvals') renderApprovals();
 });
-
+ 
 window.addEventListener('offline', ()=>{
   setSyncStatus('error','⚠️ Offline — marks saved locally');
   showToast('⚠️ No internet — marks saved locally, will auto-sync when online');
 });
-
+ 
 // Role is determined automatically from Firebase adminEmails list
-
+ 
 function showLoginMode(){
   document.getElementById('register-screen').style.display='none';
   document.getElementById('login-screen').style.display='block';
 }
-
+ 
 function showRegisterMode(){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('register-screen').style.display='block';
 }
-
+ 
 // ===================== AUTH FUNCTIONS =====================
 async function initFirebase(){
   try{
@@ -416,12 +417,13 @@ async function initFirebase(){
     volunteersDoc = db.doc(VOLUNTEERS_DOC_PATH);
     correctionsCollection = db.collection('corrections');
     auditLogCollection = db.collection('auditLog');
+    messageLogCollection = db.collection('messageLog');
     studentAddRequestsCollection = db.collection('studentAddRequests');
     // Attendance records now live as individual documents in this
     // subcollection instead of one giant field inside attendance/state.
     // See the "RECORDS STORAGE" section below for why.
     recordsCollection = stateDoc.collection('records');
-
+ 
     // Real-time listener for students/locks/archivedStudents — small,
     // slow-growing data that's fine as one document. This is the SOLE
     // writer of these three (see earlier note on the loadState() race fix).
@@ -472,9 +474,9 @@ async function initFirebase(){
       setSyncStatus('error','Firebase sync error');
       loadFromLocalCache();
     });
-
+ 
     initRecordsListener();
-
+ 
 // Guards against onAuthStateChanged showing the app for an account that's
 // still in the middle of being registered. Firebase logs a brand-new
 // account in immediately as a side effect of createUserWithEmailAndPassword
@@ -491,7 +493,7 @@ async function initFirebase(){
 // transient sign-in event entirely; registerUser() is already handling it.
 // (Declared once, at true top level near the other shared session-state
 // variables — see the comment there for why it can't be declared here.)
-
+ 
     auth.onAuthStateChanged(async user=>{
       currentUser = user;
       if(user){
@@ -507,7 +509,7 @@ async function initFirebase(){
     showToast('Firebase setup incomplete');
   }
 }
-
+ 
 // Offline fallback — used only when the real-time listener itself errors
 // out (e.g. no network). Not used during normal operation, so it can never
 // race with onSnapshot.
@@ -526,7 +528,7 @@ function loadFromLocalCache(){
     console.warn('[Offline fallback] failed to load local cache', e);
   }
 }
-
+ 
 async function loadUserRole(user){
   try{
     const adminSnapshot = await adminsDoc.get();
@@ -574,16 +576,16 @@ async function loadUserRole(user){
     currentUserName = user.email.split('@')[0];
   }
 }
-
+ 
 // NOTE: the old one-time loadState() function has been removed — its logic
 // is now split between the onSnapshot listener (normal path) and
 // loadFromLocalCache() (offline fallback), eliminating the race between a
 // one-off .get() and the live listener. See initFirebase() above.
-
+ 
 async function saveState(){
   // ALWAYS save locally first — zero data loss guarantee
   persistLocal();
-
+ 
   if(!navigator.onLine){
     setPendingSync(true);
     setSyncStatus('error','⚠️ Offline — saved locally');
@@ -592,7 +594,7 @@ async function saveState(){
     }
     return;
   }
-
+ 
   setSyncStatus('syncing','Saving...');
   try{
     if(stateDoc){
@@ -615,7 +617,7 @@ async function saveState(){
     }
   }
 }
-
+ 
 // ===================== TARGETED FIELD UPDATES (students/locks/archivedStudents) =====================
 // attendance/state now only holds students, locks, and archivedStudents —
 // attendance records moved to their own subcollection (see the big comment
@@ -638,7 +640,7 @@ async function saveFields(fieldUpdates){
     return;
   }
   if(!fieldUpdates.length) return;
-
+ 
   setSyncStatus('syncing','Saving...');
   try{
     if(!stateDoc) throw new Error('Firebase unavailable');
@@ -655,7 +657,7 @@ async function saveFields(fieldUpdates){
     return saveState();
   }
 }
-
+ 
 // Roster mutation (add/delete/edit/promote/bulk import): scoped to just the
 // section(s) actually touched, and archivedStudents if it changed.
 async function saveRosterChange({ sections = [], archived = false } = {}){
@@ -664,7 +666,7 @@ async function saveRosterChange({ sections = [], archived = false } = {}){
   if(archived) updates.push([['archivedStudents'], archivedStudents]);
   return saveFields(updates);
 }
-
+ 
 // Lock/unlock (single section or all sections): scoped to just the lock
 // key(s) actually touched.
 async function saveLockFields(lockKeys){
@@ -674,7 +676,7 @@ async function saveLockFields(lockKeys){
   ]);
   return saveFields(updates);
 }
-
+ 
 // Attendance marks and tracker entries are already written directly to the
 // records subcollection inside setRecord()/setAttendanceTracker() — there is
 // nothing left to save in attendance/state for a plain mark. This just
@@ -692,19 +694,19 @@ async function saveRecordWrites(writePromises){
     console.warn('[saveRecordWrites] failed:', e.message);
   }
 }
-
+ 
 // ===================== INIT =====================
 window.addEventListener('load', initApp);
 const monthSel=document.getElementById('month-sel');
 const yearSel=document.getElementById('year-sel');
 MONTHS.forEach((m,i)=>{const o=document.createElement('option');o.value=i;o.textContent=m;if(i===curMonth)o.selected=true;monthSel.appendChild(o);});
 for(let y=curYear-2;y<=curYear+3;y++){const o=document.createElement('option');o.value=y;o.textContent=y;if(y===curYear)o.selected=true;yearSel.appendChild(o);}
-
+ 
 async function initApp(){
   await initFirebase();
   // Real-time sync handled by onSnapshot listener in initFirebase — no polling needed
 }
-
+ 
 function showLogin(){
   document.getElementById('login-screen').style.display='block';
   document.getElementById('register-screen').style.display='none';
@@ -713,11 +715,11 @@ function showLogin(){
   if(pendingScreen) pendingScreen.style.display='none';
   setSyncStatus('error','Please sign in to sync');
 }
-
+ 
 function showApp(user){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('register-screen').style.display='none';
-
+ 
   if(currentUserRole==='pending'){
     document.getElementById('main-app').style.display='none';
     showPendingApprovalScreen(user);
@@ -767,8 +769,9 @@ function showApp(user){
   }
   initCorrectionsListener();
   initMyStudentRequestsListener();
+  initMessageLogListener();
 }
-
+ 
 function showPendingApprovalScreen(user){
   document.getElementById('pending-approval-screen').style.display='flex';
   document.getElementById('pending-approval-email').textContent = user.email;
@@ -777,7 +780,7 @@ function showPendingApprovalScreen(user){
     ? 'This account\u2019s access request was not approved. Contact an admin if you think this is a mistake.'
     : 'Your account is waiting for an admin to approve it. You\u2019ll be able to sign in normally once approved — no need to register again.';
 }
-
+ 
 function signIn(){
   const email=document.getElementById('auth-email').value.trim();
   const password=document.getElementById('auth-password').value;
@@ -789,7 +792,7 @@ function signIn(){
     showError(e.message);
   });
 }
-
+ 
 function registerUser(){
   const name=document.getElementById('register-name').value.trim();
   const email=document.getElementById('register-email').value.trim();
@@ -827,11 +830,11 @@ function registerUser(){
     showError(e.message,'register-error');
   });
 }
-
+ 
 function signOutUser(){
   auth.signOut().then(()=>{ showLogin(); setSyncStatus('error','Signed out'); }).catch(e=>{showToast('Sign out failed');});
 }
-
+ 
 // ===================== SUNDAYS =====================
 function getSundays(year,month){
   const res=[];const d=new Date(year,month,1,12,0,0);
@@ -855,7 +858,7 @@ function fmtDisplay(ds){
   if(!y || !m || !d) return ds;
   return `${d}-${m}-${y}`;
 }
-
+ 
 // Reads the joining-date value from either the Add or Edit modal, whichever
 // of the two entry modes (full date picker vs year-only number field) is
 // actually the active one for that modal right now. idPrefix is
@@ -880,21 +883,21 @@ function readJoiningDateInput(idPrefix){
   const dateVal = document.getElementById(idPrefix+'-joining').value;
   return { value: dateVal, error: null }; // empty is valid here too — caller enforces "required" if it needs to
 }
-
+ 
 function fmtShort(ds){const[,m,d]=ds.split('-').map(Number);return d+' '+MONTHS[m-1].slice(0,3);}
 function fmtFull(ds){const[y,m,d]=ds.split('-').map(Number);return new Date(y,m-1,d,12).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'});}
 function getCurrentTime(){
   const now=new Date();
   return `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
 }
-
+ 
 async function onMonthChange(){
   curMonth=parseInt(monthSel.value);curYear=parseInt(yearSel.value);
   curDate=null;buildSundayBtns();
   await loadMonthAttendance();
   renderCurrent();
 }
-
+ 
 function buildSundayBtns(){
   const sundays=getSundays(curYear,curMonth);
   const row=document.getElementById('sundays-row');row.innerHTML='';
@@ -924,7 +927,7 @@ function buildSundayBtns(){
   });
   document.getElementById('session-info').textContent=curDate?'Session: '+fmtFull(curDate):'';
 }
-
+ 
 // ===================== NAV =====================
 document.querySelectorAll('.main-tab').forEach(btn=>{
   btn.addEventListener('click',()=>{
@@ -961,7 +964,7 @@ document.querySelectorAll('.school-tab').forEach(btn=>{
     renderSection(key);
   });
 });
-
+ 
 let _renderTimer=null;
 function renderCurrent(){
   clearTimeout(_renderTimer);
@@ -975,7 +978,7 @@ function renderCurrent(){
   },50); // 50ms debounce prevents flicker on rapid section switching
 }
 function renderCurrentSection(){renderSection(curSchool['old']);renderSection(curSchool['new']);renderSection(curSchool['yuvaka']);renderGlobalLockBar();}
-
+ 
 // ===================== RECORDS =====================
 // Records are keyed by the student's permanent ID (via idFor), not their
 // array position — this is what makes promotion, deletion, and section
@@ -1006,7 +1009,7 @@ function internalKeyFromDocId(docId){
   // parts[0]=date, parts[1]=section, parts[2]=studentId, parts[3]=optional 'tracker'
   return parts[1] + '|' + parts[0] + '|' + parts[2] + (parts[3] ? '|'+parts[3] : '');
 }
-
+ 
 // Writes (or deletes) exactly ONE attendance-record document. This is the
 // actual persistence point for records now — not saveState(). Most callers
 // don't await this (fire-and-forget): Firestore's own offline persistence
@@ -1021,7 +1024,7 @@ function writeRecordKey(recordKey, value){
     ? ref.delete().catch(e=>console.warn('[Records] delete failed for', recordKey, e))
     : ref.set({v: value, section, date, studentId}).catch(e=>console.warn('[Records] write failed for', recordKey, e));
 }
-
+ 
 // For bulk operations that touch many record keys at once (deleting or
 // moving a student's entire attendance history) — one Firestore batch per
 // 450 keys instead of many separate calls, and each batch is atomic.
@@ -1040,7 +1043,7 @@ async function writeRecordKeysBatch(entries){
     catch(e){ console.warn('[Records] batch write failed', e); }
   }
 }
-
+ 
 function getRecord(k,d,i){const id=idFor(k,i);return records[k+'|'+d+'|'+id]||null;}
 function setRecord(k,d,i,v){
   const id=idFor(k,i);
@@ -1048,7 +1051,7 @@ function setRecord(k,d,i,v){
   if(v===null) delete records[rk]; else records[rk]=v;
   return writeRecordKey(rk, v);
 }
-
+ 
 // Track who marked attendance
 function getAttendanceTracker(k,d,i){const id=idFor(k,i);const key=k+'|'+d+'|'+id+'|tracker';return records[key] || {name:'',time:'',date:''};}
 function setAttendanceTracker(k,d,i,name,time,date){
@@ -1058,7 +1061,7 @@ function setAttendanceTracker(k,d,i,name,time,date){
   records[key]=trackerVal;
   return writeRecordKey(key, trackerVal);
 }
-
+ 
 function getStats(key,idx){
   const id=idFor(key,idx);
   const keys=Object.keys(records).filter(k=>{
@@ -1080,23 +1083,23 @@ function getStats(key,idx){
   }
   return{present,total,pct,streak,mPresent,mTotal,consAbsent};
 }
-
+ 
 function todayStats(key){
   const st=students[key];let p=0,a=0,u=0;
   st.forEach((_,i)=>{const r=getRecord(key,curDate,i);if(r==='P')p++;else if(r==='A')a++;else u++;});
   return{present:p,absent:a,unmarked:u,total:st.length};
 }
-
+ 
 function barColor(pct){return pct>=75?'#1D9E75':pct>=50?'#EF9F27':'#D85A30';}
 function pillClass(pct){return pct===null?'pill-gray':pct>=75?'pill-green':pct>=50?'pill-amber':'pill-red';}
-
+ 
 // ===================== RENDER =====================
 function renderSection(key){
   const panel=document.getElementById('panel-'+key);if(!panel)return;
   if(!curDate){panel.innerHTML='<div class="empty-state">Select a Sunday session above.</div>';return;}
   const st=students[key];
   const ts=todayStats(key),rate=ts.total?Math.round(ts.present/ts.total*100):0;
-
+ 
   let html=`<div class="export-bar">`;
   if(currentUserRole==='admin'){
     html+=`<button class="btn-export" onclick="exportExcel('${key}')">⬇ Export Excel</button>`;
@@ -1195,9 +1198,9 @@ function renderSection(key){
     st.forEach((_,i)=>{ const t=getAttendanceTracker(key,curDate,i); if(t.name && getRecord(key,curDate,i)) names.add(t.name); });
     return names.size > 1;
   })();
-
+ 
   html += markerSummary;
-
+ 
   html+=`<table><thead><tr>
     <th class="col-num">#</th><th class="col-name">${nameFieldLabel(key)==='Volunteer Name'?'Volunteer':'Name'}</th><th class="col-class">${secondaryFieldLabel(key)}</th>
     <th class="col-check">Present</th><th class="col-check">Absent</th>
@@ -1208,9 +1211,10 @@ function renderSection(key){
     if(multipleMarkers) html+=`<th class="col-tracker">Marked By</th>`;
     html+=`<th class="col-edit"></th><th class="col-del"></th>`;
   }
+  html+=`<th style="width:34px"></th>`;
   html+=`<th style="width:28px"></th>`;
   html+=`</tr></thead><tbody id="tbody-${key}">`;
-
+ 
   let displayPos = 0;
   sortedIndices(key).forEach(i=>{
     const student = st[i];
@@ -1228,18 +1232,18 @@ function renderSection(key){
       return ca>=3?`<span style="background:#FCEBEB;color:#D85A30;border-radius:4px;padding:2px 5px;font-size:10px;font-weight:700">⚡${ca}</span>`:'<span style="font-size:11px;color:var(--text4)">—</span>';
     })();
     const barHtml=s.mTotal>0?`<div style="font-size:9px;color:var(--text3)">${s.mPresent}/${s.mTotal}</div><div class="pct-bar"><div class="pct-fill" style="width:${Math.round(s.mPresent/s.mTotal*100)}%;background:${barColor(Math.round(s.mPresent/s.mTotal*100))}"></div></div>`:'<span style="font-size:10px;color:var(--text4)">—</span>';
-
+ 
     // At-risk: below 50% with at least 2 sessions recorded
     const atRisk = s.total >= 2 && s.pct !== null && s.pct < 50;
     const atRiskBadge = atRisk
       ? `<span title="Attendance below 50% — at risk" style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;background:var(--red-light);color:var(--red-dark);font-weight:700;margin-left:5px;vertical-align:middle">⚠ AT RISK</span>`
       : '';
-
+ 
     // Consecutive absences: 2+ in a row
     const consAbsBadge = s.consAbsent >= 2
       ? `<span title="${s.consAbsent} Sundays absent in a row" style="display:inline-block;font-size:9px;padding:1px 5px;border-radius:10px;background:var(--amber-light);color:var(--amber-dark);font-weight:700;margin-left:5px;vertical-align:middle">⚡ ${s.consAbsent} ABSENT</span>`
       : '';
-
+ 
     html+=`<tr data-idx="${i}" data-name="${escapeHtml(name.toLowerCase())}" data-rec="${rec||'U'}">
       <td class="col-num" style="color:var(--text4)">${displayPos}</td>
       <td class="col-name"><span style="font-weight:600">${escapeHtml(name)}</span>${atRiskBadge}${consAbsBadge}<br><span style="font-size:9.5px;color:var(--text4);letter-spacing:.3px">${escapeHtml(idFor(key,i))}</span></td>
@@ -1273,6 +1277,11 @@ function renderSection(key){
       html+=`<td class="col-edit"><button class="edit-btn" onclick="openEditStudentModal('${key}',${i})" title="Edit student">✏️</button></td>`;
       html+=`<td class="col-del"><button class="del-btn" onclick="removeStudent('${key}',${i})">🗑</button></td>`;
     }
+    // WhatsApp button (all roles, every row — grey when no number saved yet)
+    const hasPhone = typeof student==='object' && !!student.parentPhone;
+    const lastMsg = lastMessagedFor(idFor(key,i));
+    const lastTip = lastMsg ? ` Last messaged ${lastMsg.dateLabel} by ${lastMsg.byName||'someone'} (${lastMsg.presetLabel}).` : '';
+    html+=`<td style="width:34px;text-align:center"><button class="edit-btn wa-btn${hasPhone?'':' wa-nonum'}" onclick="openWhatsAppModal('${key}',${i})" title="${escapeHtml((hasPhone?'Send WhatsApp message.':'Send WhatsApp message (no number saved yet).')+lastTip)}" aria-label="WhatsApp message for ${escapeHtml(name)}">${WA_SVG}</button>${lastMsg?`<span class="wa-last${lastMsg.isToday?' today':''}">${escapeHtml(lastMsg.isToday?'today':lastMsg.dateLabel)}</span>`:''}</td>`;
     // History button (all roles)
     html+=`<td style="width:28px;text-align:center"><button class="edit-btn" onclick="openHistoryModal('${key}',${i})" title="View history">📋</button></td>`;
     html+=`</tr>`;
@@ -1283,7 +1292,7 @@ function renderSection(key){
   if(!st.length)html+=`<div class="empty-state">No students yet. ${currentUserRole==='admin'?'Add one above.':'Use "Request to Add" above to ask an admin to add one.'}</div>`;
   panel.innerHTML=html;
 }
-
+ 
 // Modal functions
 function openAddStudentModal(key){
   addStudentContext.key=key;
@@ -1308,6 +1317,8 @@ function openAddStudentModal(key){
   document.getElementById('modal-student-joining-year').value = '';
   toggleAddJoiningYearOnly();
   document.getElementById('modal-student-name-label').textContent = nameFieldLabel(key)+' *';
+  document.getElementById('modal-student-phone').value = '';
+  document.getElementById('modal-student-phone-label').textContent = phoneFieldLabel(key);
   const isAdmin = currentUserRole === 'admin';
   document.getElementById('add-student-modal-title').textContent = isAdmin ? 'Add New Student' : 'Request to Add a Student';
   document.getElementById('add-student-submit-btn').textContent = isAdmin ? 'Add Student' : 'Send Request to Admin';
@@ -1325,11 +1336,11 @@ function toggleAddJoiningYearOnly(){
   if(yearOnly){ dateInput.value = ''; }
   else if(!dateInput.value){ dateInput.value = fmtDate(new Date()); } // restore the sensible default if it was cleared
 }
-
+ 
 function closeAddStudentModal(){
   document.getElementById('add-student-modal').classList.remove('visible');
 }
-
+ 
 // Duplicate-name check across ALL sections. Returns the section key a
 // duplicate was found in, or null if the name is free to use.
 function findDuplicateStudentName(name) {
@@ -1342,7 +1353,7 @@ function findDuplicateStudentName(name) {
   });
   return duplicateSection;
 }
-
+ 
 // Looks up whether an archived (departed or graduated) student matches
 // this name, and if so, asks whoever's actually deciding (the admin adding
 // directly, or the admin reviewing a volunteer's request) whether to
@@ -1364,29 +1375,30 @@ function checkArchiveRestore(name) {
   archivedStudents.splice(matchIdx, 1); // no longer "departed" — active again
   return match.id;
 }
-
+ 
 // Actually creates the student and saves. Assumes duplicate-checking and
 // the archive-restore decision have ALREADY been made by the caller — this
 // is the one shared write path used by both the admin's direct "+ Add" and
 // approveStudentRequest(), so both go through identical id-generation and
 // save logic rather than two separately-maintained copies of it.
-async function createStudentInRoster(skey, { name, joiningDate, studentClass, professionType, professionDetail, originOverride, restoredId }) {
+async function createStudentInRoster(skey, { name, joiningDate, studentClass, professionType, professionDetail, originOverride, restoredId, parentPhone }) {
   const profession = isProfessionSection(skey);
   const newStudent = { name, joiningDate, id: restoredId || await generateStudentId(joiningDate, originOverride || programFor(skey)) };
   if(profession){ newStudent.profession = { type: professionType, detail: professionDetail }; }
   else { newStudent.class = studentClass; }
+  if(parentPhone){ newStudent.parentPhone = parentPhone; }
   students[skey].push(newStudent);
   await saveRosterChange({ sections: [skey], archived: restoredId != null });
   renderSection(skey);
   return newStudent;
 }
-
+ 
 async function confirmAddStudent(){
   const name=document.getElementById('modal-student-name').value.trim();
   const joinResult = readJoiningDateInput('modal-student');
   const joiningDate = joinResult.value;
   const profession = isProfessionSection(addStudentContext.key);
-
+ 
   const studentClass = profession ? '' : document.getElementById('modal-student-class').value;
   const professionType = profession ? document.getElementById('modal-student-profession-type').value : '';
   const professionDetail = profession ? document.getElementById('modal-student-profession-detail').value.trim() : '';
@@ -1396,15 +1408,17 @@ async function confirmAddStudent(){
   const originOverride = (addStudentContext.key === 'yuvaka-sangha')
     ? document.getElementById('modal-student-origin').value
     : null;
-
+ 
   if(!name){showToast('Enter student name');return;}
   if(!profession && !studentClass){showToast('Select class');return;}
   if(profession && (!professionType || !professionDetail)){showToast('Select Profession or Education, and fill in the detail');return;}
   if(!joiningDate){showToast(joinResult.error || 'Select joining date');return;}
-
+  const parentPhone = normalizePhone(document.getElementById('modal-student-phone').value);
+  if(parentPhone === null){ showToast(PHONE_ERROR); document.getElementById('modal-student-phone').focus(); return; }
+ 
   if(!addStudentContext.key) return;
   const skey = addStudentContext.key;
-
+ 
   const duplicateSection = findDuplicateStudentName(name);
   if(duplicateSection) {
     const secLabel = (SECTIONS[duplicateSection]||{}).label || duplicateSection;
@@ -1412,7 +1426,7 @@ async function confirmAddStudent(){
     document.getElementById('modal-student-name').focus();
     return; // BLOCK — no duplicates allowed
   }
-
+ 
   // Volunteers request; only an admin can actually add a student directly.
   // The archive-restore decision (does this name match someone who left
   // before?) also moves to approval time in that case — the admin
@@ -1428,6 +1442,7 @@ async function confirmAddStudent(){
         professionType: profession ? professionType : null,
         professionDetail: profession ? professionDetail : null,
         originOverride: originOverride || null,
+        parentPhone: parentPhone || null,
         status: 'pending',
         requestedBy: currentUser?currentUser.email:'',
         requestedByName: currentUserName||'',
@@ -1440,11 +1455,11 @@ async function confirmAddStudent(){
     }
     return;
   }
-
+ 
   setSyncStatus('syncing','Adding student...');
   try{
     const restoredId = checkArchiveRestore(name);
-    await createStudentInRoster(skey, { name, joiningDate, studentClass, professionType, professionDetail, originOverride, restoredId });
+    await createStudentInRoster(skey, { name, joiningDate, studentClass, professionType, professionDetail, originOverride, restoredId, parentPhone });
     if(restoredId){
       showToast('✅ ' + name + ' added — previous attendance history restored!');
     }
@@ -1455,7 +1470,7 @@ async function confirmAddStudent(){
     showToast('Error adding student');
   }
 }
-
+ 
 async function mark(key,idx,type,el){
   if(isLocked(key,curDate)){
     el.checked = !el.checked; // revert the visual toggle — this session is locked
@@ -1475,7 +1490,7 @@ async function mark(key,idx,type,el){
   renderSection(key);filterTable(key);
   await saveRecordWrites(writes);
 }
-
+ 
 async function markAll(key,type){
   if(isLocked(key,curDate)){
     showToast('🔒 This session is submitted and locked — use a correction request instead');
@@ -1491,36 +1506,36 @@ async function markAll(key,type){
   await saveRecordWrites(writes);
   showToast('All marked '+(type==='P'?'present':'absent'));
 }
-
+ 
 // Delete modal state
 let deleteContext = { key: null, idx: null, name: '', option: null };
-
+ 
 function removeStudent(key, idx) {
   const student = students[key][idx];
   const name = typeof student === 'string' ? student : student.name;
   deleteContext = { key, idx, name, option: null };
-
+ 
   document.getElementById('delete-student-name').textContent = name;
   document.getElementById('delete-modal-subtitle').textContent =
     'This will remove them from the ' + (SECTIONS[key]?.label||key) + ' list.';
-
+ 
   // Reset options
   selectDeleteOption(null);
   document.getElementById('delete-confirm-btn').style.display = 'none';
   document.getElementById('delete-overlay').style.display = 'flex';
 }
-
+ 
 function selectDeleteOption(option) {
   deleteContext.option = option;
   const keepEl = document.getElementById('delete-opt-keep');
   const delEl  = document.getElementById('delete-opt-delete');
   const btnEl  = document.getElementById('delete-confirm-btn');
-
+ 
   keepEl.style.border = '2px solid var(--border)';
   keepEl.style.background = 'var(--surface)';
   delEl.style.border  = '2px solid var(--border)';
   delEl.style.background = 'var(--surface)';
-
+ 
   if(option === 'keep') {
     keepEl.style.border = '2px solid var(--green)';
     keepEl.style.background = 'var(--green-light)';
@@ -1535,26 +1550,26 @@ function selectDeleteOption(option) {
     btnEl.style.background = '#c0392b';
   }
 }
-
+ 
 function closeDeleteModal() {
   document.getElementById('delete-overlay').style.display = 'none';
   deleteContext = { key: null, idx: null, name: '', option: null };
 }
-
+ 
 async function confirmDeleteStudent() {
   const { key, idx, name, option } = deleteContext;
   if(!key || idx === null || !option) return;
-
+ 
   closeDeleteModal();
   setSyncStatus('syncing', 'Removing...');
-
+ 
   try {
     const removedStudent = students[key][idx];
     const removedId = idFor(key, idx);
-
+ 
     // Step 1: Remove student from the roster array.
     students[key].splice(idx, 1);
-
+ 
     // Step 2: Records are keyed by this student's permanent ID, not their
     // array position, so no other student's records are ever touched here
     // — nothing to shift, nothing to renumber.
@@ -1580,19 +1595,19 @@ async function confirmDeleteStudent() {
         reason: 'removed'
       });
     }
-
+ 
     await saveRosterChange({ sections: [key], archived: option === 'keep' });
     renderSection(key);
     showToast(name + (option === 'keep' ? ' removed — records kept 📦' : ' removed — records deleted 🧹'));
     setSyncStatus('synced', 'Saved');
-
+ 
   } catch(e) {
     console.error('Delete error:', e);
     setSyncStatus('error', 'Failed to remove');
     showToast('Error: ' + e.message);
   }
 }
-
+ 
 function setFilter(key, value){
   const sel = document.getElementById('filter-'+key);
   if(!sel) return;
@@ -1600,7 +1615,7 @@ function setFilter(key, value){
   sel.value = sel.value === value ? '' : value;
   filterTable(key);
 }
-
+ 
 function filterTable(key){
   const search=(document.getElementById('search-'+key)||{}).value||'';
   const filter=(document.getElementById('filter-'+key)||{}).value||'';
@@ -1610,7 +1625,7 @@ function filterTable(key){
     r.style.display=(nm&&rc)?'':'none';
   });
 }
-
+ 
 // ===================== EXPORT =====================
 function exportExcel(key){
   if(currentUserRole!=='admin'){showToast('Export is admin-only');return;}
@@ -1645,7 +1660,7 @@ function exportExcel(key){
     showToast('❌ Export failed: '+e.message);
   }
 }
-
+ 
 // "Export All" bundles the four Balaka Sangha sections into one workbook.
 // Yuvaka Sangha is intentionally excluded here — it gets its own export via
 // the per-section Export button (exportExcel) so the two groups' Excel
@@ -1684,10 +1699,10 @@ function exportAllExcel(){
     showToast('❌ Export failed: '+e.message);
   }
 }
-
+ 
 // ===================== UTILITY: loadMonthAttendance stub =====================
 async function loadMonthAttendance(){ /* data already in memory via real-time listener */ }
-
+ 
 // ===================== DARK MODE =====================
 function applyDarkMode(dark){
   document.body.classList.toggle('dark', dark);
@@ -1703,10 +1718,10 @@ function toggleDarkMode(){
 (function(){
   try{ if(localStorage.getItem('balaka_dark')==='1') applyDarkMode(true); }catch(e){}
 })();
-
+ 
 // ===================== FEATURE 1: EDIT STUDENT =====================
 let editStudentContext = { key: null, idx: null };
-
+ 
 function openEditStudentModal(key, idx) {
   if(currentUserRole !== 'admin'){ showToast('Admin only'); return; }
   const student = students[key][idx];
@@ -1723,6 +1738,7 @@ function openEditStudentModal(key, idx) {
   document.getElementById('edit-student-joining-year').value = joinIsYearOnly ? join : '';
   toggleEditJoiningYearOnly(); // sync which of the two inputs is actually visible
   document.getElementById('edit-student-section').value = key;
+  document.getElementById('edit-student-phone').value = (typeof student === 'object' && student.parentPhone) ? formatPhone(student.parentPhone) : '';
   if(isProfessionSection(key)){
     const p = (typeof student === 'object' && student.profession) ? student.profession : {type:'',detail:''};
     document.getElementById('edit-student-profession-type').value = p.type||'';
@@ -1745,6 +1761,7 @@ function toggleEditFieldGroup(key){
   document.getElementById('edit-class-group').style.display = profession ? 'none' : 'block';
   document.getElementById('edit-profession-group').style.display = profession ? 'block' : 'none';
   document.getElementById('edit-student-name-label').textContent = nameFieldLabel(key)+' *';
+  document.getElementById('edit-student-phone-label').textContent = phoneFieldLabel(key);
   // Year-only joining date is a Yuvaka Sangha thing only (per org decision —
   // senior VYS volunteers predate exact record-keeping; VBS students always
   // have a known exact joining date). Hide it entirely for non-VYS sections,
@@ -1802,7 +1819,9 @@ async function confirmEditStudent(){
   // format problem (e.g. a malformed year), never on it simply being blank.
   if(joinResult.error){ showToast(joinResult.error); return; }
   const newJoin = joinResult.value;
-
+  const newPhone = normalizePhone(document.getElementById('edit-student-phone').value);
+  if(newPhone === null){ showToast(PHONE_ERROR); document.getElementById('edit-student-phone').focus(); return; }
+ 
   // Duplicate check (exclude self)
   let dupFound = false;
   Object.keys(students).forEach(sec => {
@@ -1813,12 +1832,13 @@ async function confirmEditStudent(){
     });
   });
   if(dupFound){ showToast('❌ "'+newName+'" already exists in another section!'); return; }
-
+ 
   setSyncStatus('syncing', 'Saving...');
   try{
     const movedId = idFor(key, idx); // this student's permanent id, preserved across any edit or section move
     const buildStudent = () => {
       const s = { name: newName, joiningDate: newJoin, id: movedId };
+      if(newPhone) s.parentPhone = newPhone;
       if(profession) s.profession = { type: professionType, detail: professionDetail };
       else s.class = newClass;
       return s;
@@ -1829,7 +1849,7 @@ async function confirmEditStudent(){
     if(newSection !== key){
       students[key].splice(idx, 1);
       students[newSection].push(buildStudent());
-
+ 
       const moveEntries = [];
       Object.keys(records).forEach(k => {
         const parts = k.split('|');
@@ -1847,7 +1867,7 @@ async function confirmEditStudent(){
       // Same section — just update in place, same id
       students[key][idx] = buildStudent();
     }
-
+ 
     await saveRosterChange({ sections: newSection !== key ? [key, newSection] : [key] });
     renderCurrentSection();
     closeEditStudentModal();
@@ -1857,7 +1877,7 @@ async function confirmEditStudent(){
     showToast('Error: '+e.message);
   }
 }
-
+ 
 // ===================== FEATURE 3: ATTENDANCE HISTORY =====================
 async function openHistoryModal(key, idx){
   const student = students[key][idx];
@@ -1867,7 +1887,7 @@ async function openHistoryModal(key, idx){
     : (typeof student === 'object' ? 'Class '+(student.class||'?') : '');
   const secLabel = (SECTIONS[key]||{}).label || key;
   const id = idFor(key, idx);
-
+ 
   // Open immediately with a loading state — the in-memory windowed records
   // (current + previous year) render right away, then get replaced by the
   // student's complete lifetime history once the on-demand fetch resolves.
@@ -1879,7 +1899,7 @@ async function openHistoryModal(key, idx){
   document.getElementById('history-subtitle').textContent = cls + ' · ' + secLabel + ' · ' + id;
   document.getElementById('history-body').innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3)">Loading full history...</div>`;
   document.getElementById('history-modal').classList.add('visible');
-
+ 
   // Baseline: whatever's already in memory for this student (from the
   // live-synced window), in case the on-demand fetch below fails — better
   // to show "at least the recent sessions" than nothing at all.
@@ -1888,11 +1908,11 @@ async function openHistoryModal(key, idx){
     const parts = k.split('|');
     if(parts[0]===key && parts[2]===id) windowedForStudent[k] = records[k];
   });
-
+ 
   const fullHistory = await fetchFullHistoryForStudent(id);
   // fullHistory is keyed by the internal format already (section|date|id[|tracker])
   const merged = Object.assign({}, windowedForStudent, fullHistory);
-
+ 
   const allDates = [...new Set(
     Object.keys(merged)
       .filter(k => {
@@ -1901,15 +1921,15 @@ async function openHistoryModal(key, idx){
       })
       .map(k => k.split('|')[1])
   )].sort().reverse();
-
+ 
   const getRec = d => merged[key+'|'+d+'|'+id] || null;
   const getTracker = d => merged[key+'|'+d+'|'+id+'|tracker'] || {name:'',time:'',date:''};
-
+ 
   const present = allDates.filter(d => getRec(d)==='P').length;
   const absent  = allDates.filter(d => getRec(d)==='A').length;
   const total   = allDates.length;
   const pct     = total ? Math.round(present/total*100) : 0;
-
+ 
   const pctColor = pct>=75?'var(--green)':pct>=50?'var(--amber)':'var(--red)';
   document.getElementById('history-stats').innerHTML = `
     <div class="history-stat"><div class="history-stat-val mv-blue">${total}</div><div class="history-stat-lbl">Sessions</div></div>
@@ -1917,7 +1937,7 @@ async function openHistoryModal(key, idx){
     <div class="history-stat"><div class="history-stat-val" style="color:var(--red)">${absent}</div><div class="history-stat-lbl">Absent</div></div>
     <div class="history-stat"><div class="history-stat-val" style="color:${pctColor}">${pct}%</div><div class="history-stat-lbl">Rate</div></div>
   `;
-
+ 
   let rows = allDates.map(d => {
     const rec = getRec(d);
     const tracker = getTracker(d);
@@ -1934,9 +1954,9 @@ async function openHistoryModal(key, idx){
       <td style="font-size:11px;color:var(--text2)">${markedBy}</td>
     </tr>`;
   }).join('');
-
+ 
   if(!rows) rows = `<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text3)">No attendance records yet.</td></tr>`;
-
+ 
   document.getElementById('history-body').innerHTML = `
     <table class="history-table">
       <thead><tr><th>Date</th><th>Month</th><th>Status</th><th>Marked By</th></tr></thead>
@@ -1946,13 +1966,13 @@ async function openHistoryModal(key, idx){
 function closeHistoryModal(){
   document.getElementById('history-modal').classList.remove('visible');
 }
-
+ 
 // ===================== FEATURE 6: GLOBAL SEARCH =====================
 function globalSearch(query){
   const q = query.trim().toLowerCase();
   const resultsEl = document.getElementById('global-search-results');
   if(!q){ resultsEl.classList.remove('visible'); resultsEl.innerHTML=''; return; }
-
+ 
   const matches = [];
   SEC_KEYS.forEach(key => {
     students[key].forEach((s, i) => {
@@ -1969,13 +1989,13 @@ function globalSearch(query){
       }
     });
   });
-
+ 
   if(!matches.length){
     resultsEl.innerHTML = `<div style="padding:12px 16px;color:var(--text3);font-size:13px">No students found matching "${escapeHtml(query)}"</div>`;
     resultsEl.classList.add('visible');
     return;
   }
-
+ 
   resultsEl.innerHTML = matches.map(m => {
     const presentActive = m.mark === 'P';
     const absentActive  = m.mark === 'A';
@@ -2014,7 +2034,7 @@ function globalSearch(query){
   }).join('');
   resultsEl.classList.add('visible');
 }
-
+ 
 // Quick-mark attendance directly from global search results, no need to
 // navigate to the student's section tab first.
 async function quickMarkFromSearch(key, idx, type, query){
@@ -2036,18 +2056,18 @@ async function quickMarkFromSearch(key, idx, type, query){
   showToast(name + ' marked ' + (type === 'P' ? 'present' : 'absent'));
   globalSearch(query); // refresh the results so the status tag/buttons update
 }
-
+ 
 function highlightMatch(name, query){
   const idx = name.toLowerCase().indexOf(query.toLowerCase());
   if(idx < 0) return escapeHtml(name);
   return escapeHtml(name.slice(0, idx)) + `<mark style="background:var(--amber-light);color:var(--amber-dark);border-radius:2px">${escapeHtml(name.slice(idx, idx+query.length))}</mark>` + escapeHtml(name.slice(idx+query.length));
 }
-
+ 
 function clearGlobalSearch(){
   document.getElementById('global-search-input').value = '';
   globalSearch('');
 }
-
+ 
 function jumpToStudent(key, idx){
   clearGlobalSearch();
   // Navigate to the right tabs
@@ -2090,7 +2110,7 @@ function jumpToStudent(key, idx){
     }
   }, 150);
 }
-
+ 
 // ===================== FEATURE 5: EXPORT ALL MONTHS =====================
 async function exportAllMonths(){
   if(currentUserRole!=='admin'){showToast('Admin only');return;}
@@ -2099,7 +2119,7 @@ async function exportAllMonths(){
     const wb = XLSX.utils.book_new();
     const yearSel = document.getElementById('year-sel');
     const exportYear = parseInt(yearSel.value);
-
+ 
     for(let m=0; m<12; m++){
       const sundays = getSundays(exportYear, m).map(fmtDate);
       if(!sundays.length) continue;
@@ -2125,7 +2145,7 @@ async function exportAllMonths(){
         XLSX.utils.book_append_sheet(wb, ws, sheetName);
       });
     }
-
+ 
     // If every Balaka Sangha section had zero students for the whole year,
     // the workbook would have no sheets at all — XLSX.writeFile throws on
     // an empty workbook, which used to fail silently with no visible error.
@@ -2133,7 +2153,7 @@ async function exportAllMonths(){
       showToast('⚠️ Nothing to export — no students with attendance data found for '+exportYear);
       return;
     }
-
+ 
     XLSX.writeFile(wb, `BalakaSangha_FullYear_${exportYear}.xlsx`);
     showToast('✅ Full year exported!');
   }catch(e){
@@ -2141,7 +2161,7 @@ async function exportAllMonths(){
     showToast('❌ Export failed: '+e.message);
   }
 }
-
+ 
 // ===================== FEATURE 8: PRINT =====================
 function printAttendanceSheet(){
   const key = curSchool[curType];
@@ -2150,10 +2170,10 @@ function printAttendanceSheet(){
   document.getElementById('print-subtitle').textContent = subtitle;
   window.print();
 }
-
+ 
 // ===================== ANALYTICS =====================
 function destroyChart(id){if(chartInstances[id]){chartInstances[id].destroy();delete chartInstances[id];}}
-
+ 
 function renderAnalytics(){
   if(currentUserRole!=='admin'){
     document.getElementById('analytics-content').innerHTML='<div class="empty-state"><h2>🔒 Restricted Access</h2><p>Analytics are available to administrators only.</p></div>';
@@ -2162,7 +2182,7 @@ function renderAnalytics(){
   
   const sundays=getSundays(curYear,curMonth).map(fmtDate);
   const labels=sundays.map(fmtShort),monthLabel=MONTHS[curMonth]+' '+curYear;
-
+ 
   let html=`<div class="export-bar">
     <button class="btn-export" onclick="exportAllExcel()">⬇ This Month (Balaka Sangha)</button>
     <button class="btn-export" onclick="exportAllMonths()" style="background:var(--green)">📅 Full Year Export</button>
@@ -2171,7 +2191,7 @@ function renderAnalytics(){
   <div class="section-block">
     <div class="analytics-h3">This session — ${curDate?fmtFull(curDate):'none selected'}</div>
     <div class="chart-grid">`;
-
+ 
   SEC_KEYS.forEach(key=>{
     const sec=SECTIONS[key],st=students[key];
     let p=0,a=0,u=0;
@@ -2188,7 +2208,7 @@ function renderAnalytics(){
     </div>`;
   });
   html+=`</div></div>`;
-
+ 
   html+=`<div class="section-block"><div class="analytics-h3">Monthly trend — ${monthLabel}</div>`;
   SEC_KEYS.forEach(key=>{
     const sec=SECTIONS[key];
@@ -2198,7 +2218,7 @@ function renderAnalytics(){
     </div>`;
   });
   html+=`</div>`;
-
+ 
   html+=`<div class="section-block"><div class="analytics-h3">All sections compared — ${monthLabel}</div>
     <div class="chart-card">
       <div class="chart-title">Attendance % per Sunday</div>
@@ -2206,9 +2226,9 @@ function renderAnalytics(){
       <div class="legend">${SEC_KEYS.map(k=>`<span><span class="legend-dot" style="background:${SECTIONS[k].color}"></span>${SECTIONS[k].label}</span>`).join('')}</div>
     </div>
   </div>`;
-
+ 
   document.getElementById('analytics-content').innerHTML=html;
-
+ 
   SEC_KEYS.forEach(key=>{
     const st=students[key];let p=0,a=0,u=0;
     if(curDate&&st.length){st.forEach((_,i)=>{const r=getRecord(key,curDate,i);if(r==='P')p++;else if(r==='A')a++;else u++;});}
@@ -2216,7 +2236,7 @@ function renderAnalytics(){
     const el=document.getElementById('pie-'+key);
     if(el)chartInstances['pie-'+key]=new Chart(el,{type:'doughnut',data:{labels:['Present','Absent','Not marked'],datasets:[{data:[p,a,u],backgroundColor:['#1D9E75','#D85A30','#888'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}});
   });
-
+ 
   SEC_KEYS.forEach(key=>{
     const sec=SECTIONS[key],st=students[key];
     const data=sundays.map(d=>{const p=st.filter((_,i)=>getRecord(key,d,i)==='P').length;return st.length?Math.round(p/st.length*100):0;});
@@ -2224,7 +2244,7 @@ function renderAnalytics(){
     const el=document.getElementById('bar-'+key);
     if(el)chartInstances['bar-'+key]=new Chart(el,{type:'bar',data:{labels,datasets:[{label:'%',data,backgroundColor:sec.color,borderRadius:3}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,.05)'}},x:{ticks:{font:{size:10},autoSkip:false}}},plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.parsed.y+'%'}}}}});
   });
-
+ 
   destroyChart('bar-all');
   const oEl=document.getElementById('bar-all');
   if(oEl){
@@ -2232,12 +2252,12 @@ function renderAnalytics(){
     chartInstances['bar-all']=new Chart(oEl,{type:'bar',data:{labels,datasets},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:'rgba(0,0,0,.05)'}},x:{ticks:{font:{size:10},autoSkip:false}}},plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.parsed.y+'%'}}}}});
   }
 }
-
-
-
+ 
+ 
+ 
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('service-worker.js').then(()=>console.log('SW registered')).catch(()=>console.log('SW register failed'));
-
+ 
   // Without this, a new service worker version can install and take over
   // network requests (via skipWaiting()/clients.claim() in
   // service-worker.js) while anyone who ALREADY has the app open keeps
@@ -2255,16 +2275,16 @@ if('serviceWorker' in navigator){
     window.location.reload();
   });
 }
-
+ 
 // ===================== YEAR-END CLASS PROMOTION =====================
-
+ 
 function getLastSundayOfMay(year) {
   // Find last Sunday of May
   const d = new Date(year, 5, 0); // Last day of May
   d.setDate(d.getDate() - d.getDay()); // Go back to Sunday
   return d;
 }
-
+ 
 function getFirstSundayOfJune(year) {
   const d = new Date(year, 5, 1); // June 1
   const day = d.getDay();
@@ -2272,11 +2292,11 @@ function getFirstSundayOfJune(year) {
   d.setDate(d.getDate() + diff);
   return d;
 }
-
+ 
 function fmtDateOnly(d) {
   return d.toISOString().split('T')[0];
 }
-
+ 
 // Shared, cross-device guard against running promotion more than once in
 // the same year. The old version used localStorage, which is per-browser —
 // if this org has more than one admin (the normal case), each admin's own
@@ -2299,21 +2319,21 @@ async function claimYearPromotion(year){
     return true; // this device just won the race — go ahead and run it
   });
 }
-
+ 
 function checkYearEndPromotion() {
   if(currentUserRole !== 'admin') return;
-
+ 
   const today = new Date();
   const lastMaySunday = getLastSundayOfMay(today.getFullYear());
   const firstJuneSunday = getFirstSundayOfJune(today.getFullYear());
   const todayStr = fmtDateOnly(today);
   const lastMayStr = fmtDateOnly(lastMaySunday);
-
+ 
   // Show reminder on last Sunday of May
   if(todayStr === lastMayStr) {
     document.getElementById('upgrade-banner').style.display = 'block';
   }
-
+ 
   // Auto-promote on/after the first Sunday of June. Using >= (not an exact
   // date match) means any admin login on or after that date catches it up,
   // however late — this is intentionally open-ended, not capped at any
@@ -2327,15 +2347,15 @@ function checkYearEndPromotion() {
     });
   }
 }
-
+ 
 async function runClassPromotion(auto = false) {
   if(currentUserRole !== 'admin') {
     showToast('Only admins can promote classes');
     return;
   }
-
+ 
   const SECTION_KEYS = ['old-middle', 'old-high', 'new-middle', 'new-high'];
-
+ 
   // Flatten every Balaka Sangha student across all 4 sections into one
   // list first. This is what makes it possible to move someone between
   // Middle/High and New/Old in the SAME step — e.g. a "new-middle" Class 7
@@ -2355,10 +2375,10 @@ async function runClassPromotion(auto = false) {
   SECTION_KEYS.forEach(key => {
     (students[key] || []).forEach(s => allEntries.push({ student: s, fromSection: key }));
   });
-
+ 
   const graduated = [];
   const survivors = []; // { student, fromSection, toSection }
-
+ 
   allEntries.forEach(({ student: s, fromSection }) => {
     if(typeof s !== 'object'){
       // legacy string-only entry (no class field to reason about) —
@@ -2375,12 +2395,12 @@ async function runClassPromotion(auto = false) {
     const toSection = 'old-' + (newClass <= 7 ? 'middle' : 'high');
     survivors.push({ student: { ...s, class: String(newClass) }, fromSection, toSection });
   });
-
+ 
   // Anyone whose section is actually changing — used both for the
   // confirmation message (so an admin sees this before it happens, not
   // after) and for migrating their existing attendance records afterward.
   const crossovers = survivors.filter(x => x.fromSection !== x.toSection);
-
+ 
   if(!auto) {
     const graduateNames = graduated.map(g => g.name).join(', ') || 'None';
     const crossoverLines = crossovers.length
@@ -2391,7 +2411,7 @@ async function runClassPromotion(auto = false) {
       `↔️ Students moving between New/Old and/or Middle/High:\n${crossoverLines}\n\n` +
       `Everyone else moves up one class within their current section.\n\nProceed?`;
     if(!confirm(msg)) return;
-
+ 
     // Manual runs need the SAME atomic claim the automatic June trigger
     // uses (see checkYearEndPromotion/claimYearPromotion above) — without
     // this, two admins both clicking "Promote Now" within moments of each
@@ -2407,15 +2427,15 @@ async function runClassPromotion(auto = false) {
       return;
     }
   }
-
+ 
   setSyncStatus('syncing', 'Promoting classes...');
-
+ 
   try {
     // Redistribute survivors into their correct destination sections.
     const newSectionArrays = { 'old-middle': [], 'old-high': [], 'new-middle': [], 'new-high': [] };
     survivors.forEach(({ student, toSection }) => newSectionArrays[toSection].push(student));
     SECTION_KEYS.forEach(key => { students[key] = newSectionArrays[key]; });
-
+ 
     // Migrate attendance records for anyone whose section actually changed
     // — otherwise their history would still be filed under their OLD
     // section prefix while they're now rendered under a different one.
@@ -2442,13 +2462,13 @@ async function runClassPromotion(auto = false) {
       });
     });
     if(moveEntries.length) await writeRecordKeysBatch(moveEntries);
-
+ 
     // Records are keyed by each student's permanent id, not their array
     // position, so promoting or graduating students never requires
     // rebuilding anyone's attendance history — a survivor's records stay
     // attached to them automatically no matter how the roster array
     // shifts underneath them.
-
+ 
     // Register graduates in the same archived-students list that "removed
     // & keep records" uses, so if a promotion turns out to have been a
     // mistake, re-adding that name restores their exact original id and
@@ -2461,7 +2481,7 @@ async function runClassPromotion(auto = false) {
         archivedAt: fmtDate(new Date()), reason: 'graduated'
       });
     });
-
+ 
     await saveRosterChange({ sections: SECTION_KEYS, archived: true });
     // NOTE: no separate "mark year as done" write needed here anymore —
     // both the auto path (claimed in checkYearEndPromotion) and the manual
@@ -2469,10 +2489,10 @@ async function runClassPromotion(auto = false) {
     // claim atomically BEFORE any of this work started, which is what
     // actually protects against double-runs. Writing it again here would
     // just be redundant, not additionally protective.
-
+ 
     // Hide banner
     document.getElementById('upgrade-banner').style.display = 'none';
-
+ 
     // Show graduated students
     if(graduated.length > 0) {
       const list = document.getElementById('graduated-list');
@@ -2484,21 +2504,21 @@ async function runClassPromotion(auto = false) {
       ).join('');
       document.getElementById('graduated-overlay').style.display = 'flex';
     }
-
+ 
     renderCurrentSection();
     showToast('✅ All classes promoted successfully!');
     setSyncStatus('synced', 'Classes promoted');
-
+ 
   } catch(e) {
     setSyncStatus('error', 'Promotion failed');
     showToast('Error: ' + e.message);
   }
 }
-
+ 
 // ---------- Records subcollection (see writeRecordKey/writeRecordKeysBatch
 // above and the big comment on the stateDoc listener for why this exists) ----------
 let latestSubcollectionRecords = {}; // raw cache of what's in the CURRENT WINDOW of the 'records' subcollection
-
+ 
 // Merges the new subcollection data with whatever's still sitting in the
 // OLD attendance/state.records field (if any hasn't been migrated yet).
 // Subcollection wins for any key present in both, but nothing that exists
@@ -2509,7 +2529,7 @@ function rebuildRecordsFromSources(){
   records = Object.assign({}, legacyRecordsField || {}, latestSubcollectionRecords);
   renderCurrent();
 }
-
+ 
 // How many years of history to keep live-synced at all times. Covers "this
 // year's sessions" (daily use) and "last year" (year-over-year comparisons
 // in Analytics) without ever downloading the organization's entire history
@@ -2517,19 +2537,19 @@ function rebuildRecordsFromSources(){
 // feature actually needs them (see fetchFullHistoryForStudent below) —
 // there's no need to keep them resident in memory or re-synced live.
 const RECORDS_WINDOW_YEARS_BACK = 1;
-
+ 
 function currentRecordsWindowBounds(){
   const thisYear = new Date().getFullYear();
   const startYear = thisYear - RECORDS_WINDOW_YEARS_BACK;
   const endYearExclusive = thisYear + 1;
   return { start: startYear + '-01-01', endExclusive: endYearExclusive + '-01-01' };
 }
-
+ 
 let recordsListenerUnsubscribe = null;
 function initRecordsListener(){
   if(!recordsCollection) return;
   if(recordsListenerUnsubscribe) recordsListenerUnsubscribe(); // avoid stacking listeners if this is ever called again (e.g. after a year rolls over)
-
+ 
   const { start, endExclusive } = currentRecordsWindowBounds();
   recordsListenerUnsubscribe = recordsCollection
     .where(firebase.firestore.FieldPath.documentId(), '>=', start)
@@ -2541,7 +2561,7 @@ function initRecordsListener(){
       rebuildRecordsFromSources();
     }, err=>console.warn('[Records] windowed listener error', err));
 }
-
+ 
 // On-demand fetch for a SPECIFIC student's complete lifetime history,
 // regardless of the live-synced window above — used by the History modal,
 // which is explicitly asking "show me everything for this one person," not
@@ -2562,11 +2582,11 @@ async function fetchFullHistoryForStudent(studentId){
     return {};
   }
 }
-
+ 
 // ---------- §1.3/§4 fix: new-account approvals ----------
 let allPendingUsers = [];
 let allPendingStudentRequests = [];
-
+ 
 // Shared badge for the Approvals tab — combines pending accounts AND
 // pending student requests into one count, since both live in that tab.
 function updateApprovalsBadge(){
@@ -2576,7 +2596,7 @@ function updateApprovalsBadge(){
   if(total>0){ badge.textContent=total; badge.style.display='inline-block'; }
   else { badge.style.display='none'; }
 }
-
+ 
 // Admin-only — keeps the Approvals badge and tab live. Only called from
 // showApp() when currentUserRole==='admin', so volunteers never run this
 // query even though the users collection itself is broadly readable.
@@ -2588,7 +2608,7 @@ function initPendingUsersListener(){
     if(curView==='approvals') renderApprovals();
   }, err=>console.warn('[Approvals] listener error', err));
 }
-
+ 
 // Admin-only — pending requests from volunteers asking for a student to be
 // added. A volunteer marking attendance can spot someone missing from the
 // list and ask for them to be added, without being able to add them
@@ -2601,7 +2621,7 @@ function initStudentRequestsListener(){
     if(curView==='approvals') renderApprovals();
   }, err=>console.warn('[StudentRequests] listener error', err));
 }
-
+ 
 function renderApprovals(){
   const el = document.getElementById('approvals-content');
   if(!el) return;
@@ -2612,7 +2632,7 @@ function renderApprovals(){
     return;
   }
   if(promoBox) promoBox.style.display = 'block';
-
+ 
   let html = '<h3 style="margin:6px 0 14px">🧑‍🎓 Pending Student Requests</h3>';
   if(!allPendingStudentRequests.length){
     html += '<div class="empty-state" style="margin-bottom:22px">No pending student requests right now.</div>';
@@ -2633,7 +2653,7 @@ function renderApprovals(){
       </div>`;
     }).join('') + '<div style="margin-bottom:22px"></div>';
   }
-
+ 
   html += '<h3 style="margin:6px 0 14px">👤 Pending Account Approvals</h3>';
   if(!allPendingUsers.length){
     html += '<div class="empty-state">No pending account requests right now.</div>';
@@ -2653,15 +2673,15 @@ function renderApprovals(){
       </div>`;
     }).join('');
   }
-
+ 
   el.innerHTML = html;
 }
-
+ 
 async function approveStudentRequest(requestId){
   if(currentUserRole!=='admin') return;
   const r = allPendingStudentRequests.find(x=>x.id===requestId);
   if(!r) return;
-
+ 
   // Re-check for a duplicate now, in case someone else already added this
   // exact name between when the request was submitted and now.
   const duplicateSection = findDuplicateStudentName(r.name);
@@ -2670,19 +2690,19 @@ async function approveStudentRequest(requestId){
     showToast('❌ "'+r.name+'" already exists in '+secLabel+' — reject this request or ask the volunteer to check');
     return;
   }
-
+ 
   // The archive-restore decision belongs here, at approval time, not at
   // request time — the admin reviewing has the context to know whether
   // this is genuinely the same returning person.
   const restoredId = checkArchiveRestore(r.name);
-
+ 
   if(!confirm('Approve adding "'+r.name+'" to '+(r.sectionLabel||r.section)+'?')) return;
-
+ 
   try{
     await createStudentInRoster(r.section, {
       name: r.name, joiningDate: r.joiningDate,
       studentClass: r.class, professionType: r.professionType, professionDetail: r.professionDetail,
-      originOverride: r.originOverride, restoredId
+      originOverride: r.originOverride, restoredId, parentPhone: r.parentPhone || ''
     });
     await studentAddRequestsCollection.doc(requestId).update({
       status: 'approved',
@@ -2693,7 +2713,7 @@ async function approveStudentRequest(requestId){
     showToast('✅ '+r.name+' added to '+(r.sectionLabel||r.section)+(restoredId?' — previous history restored!':''));
   }catch(e){ showToast('Error: '+e.message); }
 }
-
+ 
 async function rejectStudentRequest(requestId){
   if(currentUserRole!=='admin') return;
   const r = allPendingStudentRequests.find(x=>x.id===requestId);
@@ -2709,7 +2729,7 @@ async function rejectStudentRequest(requestId){
     showToast('Request rejected');
   }catch(e){ showToast('Error: '+e.message); }
 }
-
+ 
 async function approveUserAccount(uid){
   if(currentUserRole!=='admin') return;
   const u = allPendingUsers.find(x=>x.id===uid);
@@ -2724,7 +2744,7 @@ async function approveUserAccount(uid){
     showToast('✅ '+(u.name||u.email)+' approved');
   }catch(e){ showToast('Error: '+e.message); }
 }
-
+ 
 async function rejectUserAccount(uid){
   if(currentUserRole!=='admin') return;
   const u = allPendingUsers.find(x=>x.id===uid);
@@ -2739,3 +2759,233 @@ async function rejectUserAccount(uid){
     showToast('Account rejected');
   }catch(e){ showToast('Error: '+e.message); }
 }
+ 
+// ===================== FEATURE: WHATSAPP MESSAGE (human-sent, free) =====================
+// Nothing here sends anything by itself. A volunteer/admin picks a message,
+// optionally edits it, and taps Send — that opens WhatsApp (app or web) with
+// the text pre-filled via a wa.me click-to-chat link, and the person presses
+// send inside WhatsApp. No API, no backend, no per-message cost.
+ 
+// WhatsApp glyph (24x24, uses currentColor so CSS can tint it green/grey)
+const WA_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>';
+ 
+const PHONE_ERROR = 'Enter a valid mobile number (10 digits, or with country code e.g. +91…)';
+ 
+function phoneFieldLabel(key){
+  return isProfessionSection(key) ? 'WhatsApp number (optional)' : "Parent's WhatsApp number (optional)";
+}
+ 
+// Returns '' for blank, null for invalid, otherwise digits with country code
+// (e.g. '919876543210'). Bare 10-digit Indian mobiles get 91 prepended.
+function normalizePhone(raw){
+  let d = String(raw||'').replace(/\D/g,'');
+  if(!d) return String(raw||'').trim() ? null : '';
+  if(d.startsWith('00')) d = d.slice(2);
+  if(d.length === 10 && /^[6-9]/.test(d)) return '91' + d;
+  if(d.length === 11 && d[0] === '0' && /^[6-9]/.test(d[1])) return '91' + d.slice(1);
+  if(d.length === 12 && d.startsWith('91') && /^[6-9]/.test(d[2])) return d;
+  if(d.length >= 11 && d.length <= 15 && d[0] !== '0') return d; // other countries
+  return null;
+}
+function formatPhone(d){
+  d = String(d||'');
+  if(d.length === 12 && d.startsWith('91')) return '+91 ' + d.slice(2,7) + ' ' + d.slice(7);
+  return d ? '+' + d : '';
+}
+ 
+let waContext = { key: null, id: null, preset: null, savedPhone: '' };
+ 
+function waPresets(key, student, stats){
+  const name = student.name;
+  const org  = isProfessionSection(key) ? 'Yuvaka Sangha' : 'Balakasangha';
+  const you  = isProfessionSection(key); // volunteers are messaged directly, students via parents
+  const day  = curDate ? fmtShort(curDate) : 'today';
+  const hasStats = stats.total > 0 && stats.pct !== null;
+  const sign = `\n\nThank you,\n${org}`;
+  return {
+    absent: {
+      label: 'Absent today',
+      text: you
+        ? `Namaste 🙏\nWe missed you at today's Sunday session (${day}). Hope all is well. Do let us know if there is anything we can help with.${sign}`
+        : `Namaste 🙏\n${name} was not present at today's Sunday session (${day}). We hope everything is fine. Please let us know if there is anything we should be aware of.${sign}`
+    },
+    low: {
+      label: 'Low attendance',
+      text: you
+        ? `Namaste 🙏\nWe have not seen you at many of our recent sessions${hasStats?` (${stats.present} of ${stats.total} Sundays so far)`:''}. We would love to have you back. Is there anything we can help with?${sign}`
+        : `Namaste 🙏\n${name}'s attendance has been low recently${hasStats?` (${stats.present} of ${stats.total} Sundays, ${stats.pct}%)`:''}. We would love to see ${name} more regularly and don't want them to miss out. Is there anything we can help with?${sign}`
+    },
+    reminder: {
+      label: 'Sunday reminder',
+      text: you
+        ? `Namaste 🙏\nA gentle reminder about this Sunday's session. We look forward to seeing you.${sign}`
+        : `Namaste 🙏\nA gentle reminder about this Sunday's session. Please send ${name}. We look forward to seeing them.${sign}`
+    },
+    custom: { label: 'Write my own', text: '' }
+  };
+}
+ 
+function openWhatsAppModal(key, idx){
+  const student = students[key] && students[key][idx];
+  if(!student || typeof student !== 'object') return;
+  const stats = getStats(key, idx);
+  const rec = curDate ? getRecord(key, curDate, idx) : null;
+  const atRisk = stats.total >= 2 && stats.pct !== null && stats.pct < 50;
+  waContext = { key, id: idFor(key, idx), preset: null, savedPhone: student.parentPhone || '' };
+ 
+  document.getElementById('wa-student-name').textContent = student.name;
+  document.getElementById('wa-phone-label').textContent = isProfessionSection(key) ? 'WhatsApp number' : "Parent's WhatsApp number";
+  document.getElementById('wa-phone').value = formatPhone(waContext.savedPhone);
+ 
+  const presets = waPresets(key, student, stats);
+  document.getElementById('wa-chips').innerHTML = Object.keys(presets).map(id =>
+    `<button type="button" class="wa-chip" id="wa-chip-${id}" onclick="waSelectPreset('${id}')">${escapeHtml(presets[id].label)}</button>`
+  ).join('');
+ 
+  // "Last messaged" notice — amber if it was already done today, so two volunteers don't double up
+  const lastLine = document.getElementById('wa-last-line');
+  const lm = lastMessagedFor(waContext.id);
+  if(lm){
+    lastLine.style.display = 'block';
+    lastLine.style.background = lm.isToday ? 'var(--amber-light)' : 'var(--blue-light)';
+    lastLine.style.color = lm.isToday ? 'var(--amber-dark)' : 'var(--text2)';
+    lastLine.textContent = (lm.isToday ? '⚠ Already messaged today' : 'Last messaged ' + lm.dateLabel)
+      + (lm.byName ? ' by ' + lm.byName : '') + ' · ' + lm.presetLabel;
+  } else {
+    lastLine.style.display = 'none';
+  }
+ 
+  // Sensible default: absent today → absent message; flagged → low-attendance; else reminder
+  waSelectPreset(rec === 'A' ? 'absent' : (atRisk ? 'low' : 'reminder'));
+  waUpdateSaveRow();
+  document.getElementById('wa-modal').classList.add('visible');
+}
+ 
+// Re-find the student by permanent id (the roster can shift under a live listener while the popup is open)
+function waCurrentStudent(){
+  const arr = students[waContext.key] || [];
+  const idx = arr.findIndex(s => s && typeof s === 'object' && s.id === waContext.id);
+  return idx === -1 ? null : { student: arr[idx], idx };
+}
+ 
+function waSelectPreset(id){
+  const cur = waCurrentStudent();
+  if(!cur) return;
+  const presets = waPresets(waContext.key, cur.student, getStats(waContext.key, cur.idx));
+  waContext.preset = id;
+  document.querySelectorAll('#wa-chips .wa-chip').forEach(b => b.classList.toggle('active', b.id === 'wa-chip-'+id));
+  const ta = document.getElementById('wa-text');
+  ta.value = presets[id].text;
+  if(id === 'custom') ta.focus();
+}
+ 
+// Admins can save a newly typed number onto the student's profile in one go.
+// Volunteers can still use any number for this one message, it just isn't stored.
+function waUpdateSaveRow(){
+  const row = document.getElementById('wa-save-row');
+  const typed = normalizePhone(document.getElementById('wa-phone').value);
+  const changed = !!typed && typed !== waContext.savedPhone;
+  row.style.display = (currentUserRole === 'admin' && changed) ? 'flex' : 'none';
+}
+ 
+function closeWhatsAppModal(){
+  document.getElementById('wa-modal').classList.remove('visible');
+  waContext = { key: null, id: null, preset: null, savedPhone: '' };
+}
+ 
+async function sendWhatsApp(){
+  const phone = normalizePhone(document.getElementById('wa-phone').value);
+  if(!phone){ showToast(phone === '' ? 'Add a WhatsApp number first' : PHONE_ERROR); document.getElementById('wa-phone').focus(); return; }
+  const text = document.getElementById('wa-text').value.trim();
+  if(!text){ showToast('Write or pick a message first'); return; }
+ 
+  // Open WhatsApp synchronously inside the click so the browser doesn't treat it as a blocked popup.
+  const url = 'https://wa.me/' + phone + '?text=' + encodeURIComponent(text);
+  const w = window.open(url, '_blank', 'noopener');
+  if(!w) window.location.href = url;
+ 
+  logWhatsAppSend(waContext.key, waContext.id, waContext.preset);
+ 
+  // Optionally save the number to the student's profile (admin only)
+  const wantsSave = currentUserRole === 'admin' && document.getElementById('wa-save-phone').checked && phone !== waContext.savedPhone;
+  const cur = waCurrentStudent();
+  const key = waContext.key;
+  closeWhatsAppModal();
+  if(wantsSave && cur){
+    try{
+      cur.student.parentPhone = phone;
+      await saveRosterChange({ sections: [key] });
+      renderSection(key);
+      showToast('✅ Number saved');
+    }catch(e){ showToast('Could not save number: ' + e.message); }
+  }
+}
+ 
+ 
+// ===================== FEATURE: LAST-MESSAGED LOG =====================
+// One small document per WhatsApp send, in its own top-level 'messageLog'
+// collection (append-only, like auditLog, but readable by approved volunteers —
+// auditLog is admin-only). Deliberately NOT stored inside attendance/state:
+// that is one document rewritten whole on every roster save, so concurrent
+// volunteers would overwrite each other, and it's already size-constrained.
+// Logs only WHO messaged WHICH student and WHEN — never the phone number or the
+// message text. Note it records that WhatsApp was opened with a message, not
+// that the person definitely pressed send inside WhatsApp.
+let lastMessaged = {};            // studentId -> { at: Date, byName, preset }
+let messageLogUnsub = null;
+const WA_LOG_WINDOW_DAYS = 120;   // how far back the listener looks
+ 
+function initMessageLogListener(){
+  if(messageLogUnsub || !messageLogCollection) return;
+  const cutoff = new Date(Date.now() - WA_LOG_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  messageLogUnsub = messageLogCollection
+    .where('sentAt', '>=', cutoff).orderBy('sentAt', 'desc').limit(1000)
+    .onSnapshot(snap => {
+      const map = {};
+      snap.docs.forEach(doc => {
+        const d = doc.data({ serverTimestamps: 'estimate' }); // our own just-sent entry shows up instantly
+        if(!d.studentId || !d.sentAt) return;
+        if(!map[d.studentId]) map[d.studentId] = { at: d.sentAt.toDate(), byName: d.sentByName || '', preset: d.preset || '' }; // newest first
+      });
+      lastMessaged = map;
+      renderCurrent();
+    }, err => {
+      // Most likely the messageLog rules haven't been published yet — the app keeps working without the log.
+      console.warn('[messageLog] listener failed:', err.code || err.message);
+      messageLogUnsub = null;
+    });
+}
+ 
+const WA_PRESET_LABELS = { absent: 'Absent today', low: 'Low attendance', reminder: 'Sunday reminder', custom: 'Custom message' };
+ 
+function lastMessagedFor(studentId){
+  const m = lastMessaged[studentId];
+  if(!m) return null;
+  const day = fmtDate(m.at);
+  return {
+    dateLabel: fmtShort(day),
+    isToday: day === fmtDate(new Date()),
+    byName: m.byName,
+    presetLabel: WA_PRESET_LABELS[m.preset] || 'Message'
+  };
+}
+ 
+async function logWhatsAppSend(key, studentId, preset){
+  if(!messageLogCollection || !currentUser) return;
+  const cur = (students[key] || []).find(s => s && typeof s === 'object' && s.id === studentId);
+  try{
+    await messageLogCollection.add({
+      studentId,
+      studentName: cur ? cur.name : '',
+      section: key,
+      preset: preset || 'custom',
+      sessionDate: curDate || null,
+      sentByEmail: currentUser.email,
+      sentByName: currentUserName || currentUser.email,
+      sentAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }catch(e){
+    showToast('WhatsApp opened, but the "last messaged" log could not be saved (' + (e.code || e.message) + ')');
+  }
+}
+ 
